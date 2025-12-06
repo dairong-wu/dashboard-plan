@@ -20,6 +20,7 @@ def load_data():
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         return df_total
     except Exception as e:
+        st.error(f"⚠️ Google Sheets 連線詳細錯誤：{e}")
         return None
 
 df_total = load_data()
