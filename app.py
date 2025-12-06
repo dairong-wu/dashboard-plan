@@ -15,7 +15,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 def load_data():
     try:
         # 讀取「總計」分頁，header=1 表示第二列是標題
-        df_total = conn.read(worksheet="總計", header=1)
+        df_total = conn.read(worksheet="Summary", header=1)
         df_total = df_total.dropna(subset=['日期'])
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         return df_total
