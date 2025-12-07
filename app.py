@@ -11,6 +11,7 @@ st.set_page_config(page_title="Jeffy's FIRE 戰情室 🔥", page_icon="📈", l
 
 # --- 讀取 Secrets 中的 URL ---
 try:
+    # 這裡會讀取你設定在 Streamlit Cloud Secrets 中的 GID 連結
     SPREADSHEET_URL = st.secrets["data"]["sheet_url"]
 except KeyError:
     st.error("⚠️ **Secrets 錯誤:** 請確認您的 `secrets.toml` 中有設定 `[data]` 和 `sheet_url`。")
@@ -20,6 +21,7 @@ except KeyError:
 @st.cache_data(ttl=10) 
 def load_data(url):
     try:
+        # 讀取 GID 格式的 CSV 匯出連結
         df_total = pd.read_csv(url, header=1) 
         
         # 1. 欄位清洗與去空格
@@ -36,17 +38,18 @@ def load_data(url):
         df_total = df_total.sort_values('日期').reset_index(drop=True)
         
         # 5. 極限數值轉換 (解決 0 值問題)
-        # 注意：我們現在也對 '總資產+汽車折舊' 欄位做數值處理
         numeric_cols = ['總資產(TWD)', '台幣現金(TWD)', '外幣現金(EUR)', 
                         '股票成本(USD)', 'ETF(EUR)', '不動產(TWD)', '加密貨幣(USD)', '其他(TWD)', 
-                        'USDTWD', 'EURTWD', '總資產增額(TWD)', '總資產+汽車折舊'] # 新增
+                        'USDTWD', 'EURTWD', '總資產增額(TWD)', '總資產+汽車折舊'] # 確保所有關鍵欄位被處理
         
         for col in numeric_cols:
             if col in df_total.columns:
+                # 關鍵修復：強制去除所有非數字、非小數點、非負號的符號
                 df_total[col] = df_total[col].astype(str).str.replace(r'[^\d\.\-]', '', regex=True).replace('', np.nan)
+                # 然後強制轉數字，失敗就變成 NaN (最後用 0 填充)
                 df_total[col] = pd.to_numeric(df_total[col], errors='coerce').fillna(0)
             else:
-                df_total[col] = 0 # 若欄位丟失，用 0 填充
+                df_total[col] = 0
 
         return df_total
         
@@ -67,7 +70,7 @@ if not df_total.empty and len(df_total) > 0:
     latest = df_total.iloc[-1]
     prev = df_total.iloc[-2] if len(df_total) > 1 else latest
     
-    # *** 關鍵修正 1: 總資產計算基於 '總資產+汽車折舊' ***
+    # KPI 總資產計算基於 '總資產+汽車折舊'
     current_assets = latest['總資產+汽車折舊'] 
     prev_assets = prev['總資產+汽車折舊'] 
     month_diff = current_assets - prev_assets
@@ -89,25 +92,24 @@ if not df_total.empty and len(df_total) > 0:
         st.divider()
         st.subheader("🍰 圓餅圖資產篩選")
         
-        # *** 關鍵修正 2: 互動式資產篩選 ***
         all_assets = ['台幣現金', '外幣現金 (TWD)', '股票 (TWD)', 'ETF (TWD)', '不動產', '加密貨幣 (TWD)', '其他資產 (TWD)']
         selected_assets = st.multiselect(
             "請勾選圓餅圖要顯示的項目:",
             options=all_assets,
-            default=['台幣現金', '股票 (TWD)', 'ETF (TWD)', '不動產', '外幣現金 (TWD)'] # 預設顯示常用項目
+            default=['台幣現金', '股票 (TWD)', 'ETF (TWD)', '不動產', '外幣現金 (TWD)']
         )
 
         st.divider()
         st.subheader("🔮 預測模型參數")
         annual_growth = st.slider("年化成長率 (CAGR - %)", 4.0, 15.0, 7.0, 0.5) 
         st.write(f"平均月度貢獻: **${avg_monthly_gain:,.0f} TWD**")
-        st.info("嗨 Jeffy! 保持專注。NVC 流程一定會順利通過的！")
+        st.info("嗨 Jeffy! NVC 流程是挑戰，但你的資產曲線會給你信心。")
         if st.button("🔄 強制刷新數據"):
             st.cache_data.clear()
             st.rerun()
 
-    # --- 關鍵修復：資產值檢查 (Pie Chart Debug) ---
-    st.info(f"💰 **資產值檢查 (最新記錄 {latest['日期'].strftime('%Y/%m')}):** 股票(USD): **${latest['股票成本(USD)']:.2f}**, ETF(EUR): **€{latest['ETF(EUR)']:.2f}**, 加密貨幣(USD): **${latest['加密貨貨幣(USD)']:.2f}**。理論上讀到的原始值。")
+    # --- 關鍵修復：資產值檢查 (Pie Chart Debug - Typo Fixed) ---
+    st.info(f"💰 **資產值檢查 (最新記錄 {latest['日期'].strftime('%Y/%m')}):** 股票(USD): **${latest['股票成本(USD)']:.2f}**, ETF(EUR): **€{latest['ETF(EUR)']:.2f}**, 加密貨幣(USD): **${latest['加密貨幣(USD)']:.2f}**。理論上讀到的原始值。")
     st.divider()
 
     # --- 第一排：關鍵指標 (KPI) ---
