@@ -94,7 +94,7 @@ if not df_total.empty and len(df_total) > 0:
         st.subheader("🔮 預測模型參數")
         annual_growth = st.slider("年化成長率 (CAGR - %)", 4.0, 15.0, 7.0, 0.5) 
         st.write(f"平均月度貢獻: **${avg_monthly_gain:,.0f} TWD**")
-        st.info(f"嗨 Jeffy！你已經解決了所有數據流問題，這比處理 SPAD Crosstalk 簡單多了！")
+        #st.info(f"嗨 Jeffy！你已經解決了所有數據流問題，這比處理 SPAD Crosstalk 簡單多了！")
         if st.button("🔄 強制刷新數據"):
             st.cache_data.clear()
             st.rerun()
