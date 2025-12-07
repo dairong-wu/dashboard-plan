@@ -60,8 +60,8 @@ if not df_total.empty and len(df_total) > 0:
     # 匯率防呆
     raw_usd_rate = latest.get('USDTWD', 0)
     raw_eur_rate = latest.get('EURTWD', 0)
-    usd_rate = raw_usd_rate if raw_usd_rate > 10 else 31.3
-    eur_rate = raw_eur_rate if raw_eur_rate > 10 else 36.5
+    usd_rate = raw_usd_rate if raw_usd_rate > 10 else 32.5
+    eur_rate = raw_eur_rate if raw_eur_rate > 10 else 35.0
     
     # 資產價值計算
     val_stock = latest.get('股票成本(USD)', 0) * usd_rate
@@ -72,7 +72,6 @@ if not df_total.empty and len(df_total) > 0:
     val_real_estate = latest.get('不動產(TWD)', 0)
     val_other = latest.get('其他(TWD)', 0)
     
-    # 重新計算總資產 (確保與 Pie Chart 一致)
     calculated_total_assets = val_stock + val_etf + val_crypto + val_foreign_cash + val_twd_cash + val_real_estate + val_other
     
     # KPI 計算
@@ -86,16 +85,14 @@ if not df_total.empty and len(df_total) > 0:
     # --- 側邊欄：進階模型設定 ---
     with st.sidebar:
         st.header("⚙️ 參數設定")
-        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=50000000, step=1000000)
+        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=100000000, step=10000000)
         st.divider()
         
         st.subheader("🔮 分析師估值模型 (SOP)")
         st.caption("基於目前資產配置權重進行加權預測")
 
-        # 1. 預測年限
         forecast_years = st.slider("模擬未來年數", 1, 10, 5)
 
-        # 2. 選擇情境
         scenario = st.selectbox(
             "選擇分析師/市場情境",
             ("自訂 (Custom)", 
@@ -105,7 +102,6 @@ if not df_total.empty and len(df_total) > 0:
              "Michael Burry (The Big Short) - 衰退修正")
         )
 
-        # 預設參數邏輯
         if scenario == "Cathie Wood (Ark Invest) - 科技牛市":
             def_stock_rate, def_etf_rate, def_safe_rate = 25.0, 12.0, 2.0
         elif scenario == "Wall Street Consensus - 華爾街共識":
@@ -114,10 +110,9 @@ if not df_total.empty and len(df_total) > 0:
             def_stock_rate, def_etf_rate, def_safe_rate = 6.0, 5.0, 1.5
         elif scenario == "Michael Burry (The Big Short) - 衰退修正":
             def_stock_rate, def_etf_rate, def_safe_rate = -10.0, -5.0, 1.0
-        else: # 自訂
+        else: 
             def_stock_rate, def_etf_rate, def_safe_rate = 15.0, 7.0, 1.0
 
-        # 3. 細項成長率設定 (可手動微調)
         st.markdown("**各類資產預期年化報酬率 (CAGR)**")
         col_s1, col_s2 = st.columns(2)
         rate_stock = col_s1.number_input("個股 (NVDA/TSLA)", value=def_stock_rate, step=0.5, format="%.1f")
@@ -127,7 +122,6 @@ if not df_total.empty and len(df_total) > 0:
         rate_crypto = col_s3.number_input("加密貨幣", value=rate_stock if scenario != "自訂 (Custom)" else 20.0, step=1.0, format="%.1f")
         rate_safe = col_s4.number_input("房產/現金", value=def_safe_rate, step=0.1, format="%.1f")
 
-        # 4. 月度貢獻
         monthly_contribution = st.number_input(
             "每月投入資金 (TWD)", 
             value=int(historical_avg_gain), 
@@ -138,16 +132,13 @@ if not df_total.empty and len(df_total) > 0:
             st.cache_data.clear()
             st.rerun()
 
-    # --- 邏輯運算：計算加權成長率 (Weighted CAGR) ---
-    # 這是這個模型的核心：根據你實際持有的比例來決定總體成長率
+    # --- 邏輯運算：計算加權成長率 ---
     total_val = calculated_total_assets if calculated_total_assets > 0 else 1
-    
     w_stock = val_stock / total_val
     w_etf = val_etf / total_val
     w_crypto = val_crypto / total_val
     w_safe = (val_twd_cash + val_foreign_cash + val_real_estate + val_other) / total_val
     
-    # 綜合年化成長率
     weighted_cagr = (w_stock * rate_stock) + (w_etf * rate_etf) + (w_crypto * rate_crypto) + (w_safe * rate_safe)
 
     # --- KPI 區塊 ---
@@ -165,7 +156,7 @@ if not df_total.empty and len(df_total) > 0:
 
     st.divider()
 
-    # --- 圖表區 ---
+    # --- 圖表與表格區 ---
     col_chart1, col_chart2 = st.columns([2, 1])
 
     with col_chart1:
@@ -176,23 +167,49 @@ if not df_total.empty and len(df_total) > 0:
 
     with col_chart2:
         st.subheader("🍰 資產權重分布")
-        assets_dict = {
-            '個股 (高成長)': val_stock,
-            'ETF (市場成長)': val_etf,
-            '加密貨幣 (高波動)': val_crypto,
-            '防禦資產 (房/現)': val_twd_cash + val_foreign_cash + val_real_estate + val_other
-        }
-        df_pie = pd.DataFrame([(k, v) for k, v in assets_dict.items() if v > 10], columns=['Type', 'Value'])
         
-        fig_pie = px.pie(df_pie, values='Value', names='Type', hole=0.4, 
-                         color_discrete_sequence=['#FF4B4B', '#FFA500', '#9370DB', '#00CC96'])
-        st.plotly_chart(fig_pie, use_container_width=True)
+        # 準備詳細數據
+        assets_dict_detail = {
+            '不動產': val_real_estate,
+            '美股': val_stock,
+            '台幣現金': val_twd_cash,
+            '歐股/ETF': val_etf,
+            '外幣現金': val_foreign_cash,
+            '加密貨幣': val_crypto,
+            '其他': val_other
+        }
+        
+        # 轉換為 DataFrame 方便處理
+        df_display = pd.DataFrame([
+            {'資產種類': k, '金額(TWD)': v, 'Raw_Value': v} 
+            for k, v in assets_dict_detail.items() if v > 0
+        ])
+        
+        # 計算占比並排序
+        if not df_display.empty:
+            total_display_val = df_display['Raw_Value'].sum()
+            df_display['占比(%)'] = (df_display['Raw_Value'] / total_display_val * 100)
+            df_display = df_display.sort_values(by='Raw_Value', ascending=False)
+            
+            # 1. 圓餅圖
+            fig_pie = px.pie(df_display, values='Raw_Value', names='資產種類', hole=0.4, 
+                             color_discrete_sequence=px.colors.sequential.RdBu)
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+            # 2. 表格 (格式化)
+            df_table = df_display[['資產種類', '金額(TWD)', '占比(%)']].copy()
+            df_table['金額(TWD)'] = df_table['金額(TWD)'].map('${:,.0f}'.format)
+            df_table['占比(%)'] = df_table['占比(%)'].map('{:.2f}%'.format)
+            
+            st.dataframe(df_table, use_container_width=True, hide_index=True)
+        else:
+            st.warning("無有效資產數據")
 
     # --- 預測模型區 ---
     st.divider()
     st.subheader(f"🔮 {forecast_years} 年資產模擬 (加權成分成長模型)")
     st.info(f"""
-    **模型邏輯：** 根據您目前的資產配置：
+    **模型邏輯：**
     - **{w_stock*100:.1f}%** 在個股 (預估成長 {rate_stock}%)
     - **{w_etf*100:.1f}%** 在 ETF (預估成長 {rate_etf}%)
     - **{w_safe*100:.1f}%** 在防禦資產 (預估成長 {rate_safe}%)
@@ -201,16 +218,15 @@ if not df_total.empty and len(df_total) > 0:
 
     current_date = latest['日期']
     forecast_months = forecast_years * 12
-    
     future_data = []
     
-    # 分別計算各類資產的成長 (更精準的複利)
+    # 預測初始值
     curr_stock = val_stock
     curr_etf = val_etf
     curr_crypto = val_crypto
     curr_safe = val_twd_cash + val_foreign_cash + val_real_estate + val_other
     
-    # 假設每月投入資金按目前比例分配
+    # 投入分配
     monthly_in_stock = monthly_contribution * w_stock
     monthly_in_etf = monthly_contribution * w_etf
     monthly_in_crypto = monthly_contribution * w_crypto
@@ -230,7 +246,6 @@ if not df_total.empty and len(df_total) > 0:
 
     df_forecast = pd.DataFrame(future_data)
     
-    # 合併與繪圖
     df_history = df_total[['日期', '總資產(TWD)']].copy()
     df_history['Type'] = '歷史紀錄'
     df_forecast['Type'] = '未來預測'
@@ -246,7 +261,6 @@ if not df_total.empty and len(df_total) > 0:
     final_val = df_forecast.iloc[-1]['總資產(TWD)']
     st.success(f"🎯 **模擬結果：** {forecast_years} 年後總資產預估 **${final_val:,.0f} TWD**。")
 
-    # Debug 區
     with st.expander("查看原始數據"):
         st.dataframe(df_total.tail(10))
 
