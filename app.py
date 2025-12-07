@@ -74,8 +74,8 @@ if not df_total.empty and len(df_total) > 0:
     raw_usd_rate = latest.get('USDTWD', 0)
     raw_eur_rate = latest.get('EURTWD', 0)
     
-    usd_rate = raw_usd_rate if raw_usd_rate > 10 else 32.5
-    eur_rate = raw_eur_rate if raw_eur_rate > 10 else 35.0
+    usd_rate = raw_usd_rate if raw_usd_rate > 10 else 31.3
+    eur_rate = raw_eur_rate if raw_eur_rate > 10 else 36.5
     
     # 標示匯率來源 (用於 Debug)
     rate_source = "即時數據" if raw_usd_rate > 10 else "系統預設 (因原始數據異常)"
