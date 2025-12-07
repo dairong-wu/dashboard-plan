@@ -5,13 +5,13 @@ import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+import re # <-- 新增：導入 Python 標準庫 re，用於兼容性修復
 
 # --- 設定頁面資訊 ---
 st.set_page_config(page_title="Jeffy's FIRE 戰情室 🔥", page_icon="📈", layout="wide")
 
 # --- 讀取 Secrets 中的 URL ---
 try:
-    # 這裡會讀取你設定在 Streamlit Cloud Secrets 中的 GID 連結
     SPREADSHEET_URL = st.secrets["data"]["sheet_url"]
 except KeyError:
     st.error("⚠️ **Secrets 錯誤:** 請確認您的 `secrets.toml` 中有設定 `[data]` 和 `sheet_url`。")
@@ -36,17 +36,20 @@ def load_data(url):
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         df_total = df_total.sort_values('日期').reset_index(drop=True)
         
-        # 5. ***最終修復：極限數值轉換 (已移除 regex=True 參數)***
+        # 5. ***最終修復：極限數值轉換 (使用 re 模組繞過 Pandas 版本限制)***
         numeric_cols = ['總資產(TWD)', '台幣現金(TWD)', '外幣現金(EUR)', 
                         '股票成本(USD)', 'ETF(EUR)', '不動產(TWD)', '加密貨幣(USD)', '其他(TWD)', 'USDTWD', 'EURTWD', '總資產增額(TWD)']
         for col in numeric_cols:
             if col in df_total.columns:
-                # 關鍵修復：強制去除所有非數字、非小數點、非負號的符號，並避免使用 regex=True
-                # 我們使用一個更嚴格的 Lambda 函數來確保字串處理成功
-                df_total[col] = df_total[col].apply(
-                    # 注意：我們將 replace 改為使用單一字元，避免 Pandas 舊版對 regex 參數的限制
-                    lambda x: pd.to_numeric(str(x).replace(r'[^\d\.\-]', '', regex=False).strip(), errors='coerce')
-                ).fillna(0)
+                
+                # 關鍵修復：使用 Python 標準庫 re.sub 進行字串清理
+                # 這樣能保證在任何環境版本下，清理邏輯都能正確執行
+                df_total[col] = df_total[col].astype(str).apply(
+                    lambda x: re.sub(r'[^\d\.\-]', '', x)
+                )
+                
+                # 然後強制轉數字，失敗就變成 NaN (最後用 0 填充)
+                df_total[col] = pd.to_numeric(df_total[col], errors='coerce').fillna(0)
             else:
                 df_total[col] = 0
 
@@ -92,13 +95,13 @@ if not df_total.empty and len(df_total) > 0:
         st.subheader("🔮 預測模型參數")
         annual_growth = st.slider("年化成長率 (CAGR - %)", 4.0, 15.0, 7.0, 0.5) 
         st.write(f"平均月度貢獻: **${avg_monthly_gain:,.0f} TWD**")
-        st.info(f"嗨 Jeffy！NIW/NVC 流程一定會順利通過的。你的資產在持續增長，這是給橙橙和即將到來的二女兒最好的禮物！")
+        st.info(f"嗨 Jeffy！你已經解決了所有數據流問題，這比處理 SPAD Crosstalk 簡單多了！")
         if st.button("🔄 強制刷新數據"):
             st.cache_data.clear()
             st.rerun()
 
     # --- 關鍵修正：資產值檢查 (Pie Chart Debug) ---
-    st.info(f"💰 **資產值檢查 (最新記錄 {latest['日期'].strftime('%Y/%m')}):** 股票(USD): **${latest['股票成本(USD)']:.2f}**, ETF(EUR): **€{latest['ETF(EUR)']:.2f}**, 加密貨幣(USD): **${latest['加密貨幣(USD)']:.2f}**。理論上讀到的原始值。")
+    st.info(f"💰 **資產值檢查 (最新記錄 {latest['日期'].strftime('%Y/%m')}):** 股票(USD): **${latest['股票成本(USD)']:.2f}**, ETF(EUR): **€{latest['ETF(EUR)']:.2f}**, 加密貨幣(USD): **${latest['加密貨貨幣(USD)']:.2f}**。理論上讀到的原始值。")
     st.divider()
 
     # --- 第一排：關鍵指標 (KPI) ---
