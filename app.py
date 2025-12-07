@@ -9,19 +9,9 @@ from dateutil.relativedelta import relativedelta
 # --- 設定頁面資訊 ---
 st.set_page_config(page_title="Jeffy's FIRE 戰情室 🔥", page_icon="📈", layout="wide")
 
-# --- CSS 美化 ---
-st.markdown("""
-<style>
-    .big-font {
-        font-size: 20px !important;
-        font-weight: bold;
-        color: #00CC96;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # --- 讀取 Secrets 中的 URL ---
 try:
+    # 這裡會讀取你設定在 Streamlit Cloud Secrets 中的 GID 連結
     SPREADSHEET_URL = st.secrets["data"]["sheet_url"]
 except KeyError:
     st.error("⚠️ **Secrets 錯誤:** 請確認您的 `secrets.toml` 中有設定 `[data]` 和 `sheet_url`。")
@@ -31,28 +21,30 @@ except KeyError:
 @st.cache_data(ttl=10) 
 def load_data(url):
     try:
+        # 讀取 GID 格式的 CSV 匯出連結
         df_total = pd.read_csv(url, header=1) 
         
-        # 關鍵修復：清除欄位名稱中的空格
+        # 1. 欄位清洗與去空格
         df_total.columns = df_total.columns.str.strip() 
         
-        # 數據清洗與前處理
+        # 2. 數據清洗與前處理
         df_total = df_total.dropna(subset=['日期', '總資產(TWD)']).copy()
         
-        # *** 新增：排除未來空行 (解決 2028/12 數據範圍問題) ***
+        # 3. 排除未來空行 (總資產為零或空白的紀錄)
         df_total = df_total[df_total['總資產(TWD)'] != 0].copy()
         
-        # 轉換日期格式 (確保能排序)
+        # 4. 轉換日期
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         df_total = df_total.sort_values('日期').reset_index(drop=True)
         
-        # 確保關鍵數值欄位是數字，並處理逗號和 NaN
+        # 5. ***最終修復：極限數值轉換 (解決 0 值問題)***
         numeric_cols = ['總資產(TWD)', '台幣現金(TWD)', '外幣現金(EUR)', 
                         '股票成本(USD)', 'ETF(EUR)', '不動產(TWD)', '加密貨幣(USD)', '其他(TWD)', 'USDTWD', 'EURTWD', '總資產增額(TWD)']
         for col in numeric_cols:
             if col in df_total.columns:
-                # 處理可能存在的逗號（千分位）和多餘符號
+                # 關鍵修復：強制去除所有非數字、非小數點、非負號的符號
                 df_total[col] = df_total[col].astype(str).str.replace(r'[^\d\.\-]', '', regex=True).replace('', np.nan)
+                # 然後強制轉數字，失敗就變成 NaN (最後用 0 填充)
                 df_total[col] = pd.to_numeric(df_total[col], errors='coerce').fillna(0)
             else:
                 df_total[col] = 0
@@ -68,6 +60,7 @@ df_total = load_data(SPREADSHEET_URL)
 
 # --- 介面呈現 ---
 st.title("🔥 Jeffy 的 FIRE 戰情室")
+st.markdown("### *用工程師的效率，看資產曲線穩穩爬升！💪*")
 
 if not df_total.empty and len(df_total) > 0:
     
@@ -82,11 +75,10 @@ if not df_total.empty and len(df_total) > 0:
     usd_rate = latest['USDTWD'] if 'USDTWD' in latest else 32.5
     eur_rate = latest['EURTWD'] if 'EURTWD' in latest else 35.0
     
-    # 計算平均每月儲蓄 (只基於非零的歷史紀錄)
+    # 計算平均每月儲蓄
     df_gains = df_total[df_total['總資產增額(TWD)'] > 0]
     avg_monthly_gain = df_gains['總資產增額(TWD)'].mean() if not df_gains.empty else 0
     
-
     # --- 側邊欄：個人化設定與預測參數 ---
     with st.sidebar:
         st.header("⚙️ 戰情室設定")
@@ -98,16 +90,16 @@ if not df_total.empty and len(df_total) > 0:
         st.subheader("🔮 預測模型參數")
         annual_growth = st.slider("年化成長率 (CAGR - %)", 4.0, 15.0, 7.0, 0.5) 
         st.write(f"平均月度貢獻: **${avg_monthly_gain:,.0f} TWD**")
-        st.info("嗨 Jeffy! 保持專注。NVC 流程一定會順利通過的！")
+        st.info("嗨 Jeffy! NVC 流程是挑戰，但你的資產曲線會給你信心。")
         if st.button("🔄 強制刷新數據"):
             st.cache_data.clear()
             st.rerun()
 
-    # --- 關鍵修正：資產值檢查 (Pie Chart Debug) ---
-    st.info(f"💰 **資產值檢查 (最新記錄 {latest['日期'].strftime('%Y/%m')}):** 股票(TWD): **${latest['股票成本(USD)'] * usd_rate:,.0f}**, ETF(TWD): **${latest['ETF(EUR)'] * eur_rate:,.0f}**, 加密貨幣(TWD): **${latest['加密貨幣(USD)'] * usd_rate:,.0f}**。如果這些值是 $0，請檢查 Google Sheet 的計算公式。")
+    # --- 關鍵修復：資產值檢查 (Pie Chart Debug) ---
+    st.info(f"💰 **資產值檢查 (最新記錄 {latest['日期'].strftime('%Y/%m')}):** 股票(USD): **${latest['股票成本(USD)']:.2f}**, ETF(EUR): **€{latest['ETF(EUR)']:.2f}**, 加密貨幣(USD): **${latest['加密貨幣(USD)']:.2f}**。理論上讀到的原始值。")
     st.divider()
 
-    # --- 第一排：KPI ---
+    # --- 第一排：關鍵指標 (KPI) ---
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric(label="💰 目前總資產 (TWD)", value=f"${current_assets:,.0f}", delta=f"{month_diff:,.0f} ({growth_rate:.2f}%)")
@@ -143,6 +135,7 @@ if not df_total.empty and len(df_total) > 0:
             '股票 (TWD)': latest['股票成本(USD)'] * usd_rate,
             'ETF (TWD)': latest['ETF(EUR)'] * eur_rate,
             '加密貨幣 (TWD)': latest['加密貨幣(USD)'] * usd_rate,
+            '其他資產 (TWD)': latest['其他(TWD)'],
         }
         
         df_pie = pd.DataFrame([(k, v) for k, v in assets_dict.items() if v > 0], columns=['Type', 'Value'])
