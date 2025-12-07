@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-import re # <-- 新增：導入 Python 標準庫 re，用於兼容性修復
+import re # <-- 使用 re 模組確保環境兼容性
 
 # --- 設定頁面資訊 ---
 st.set_page_config(page_title="Jeffy's FIRE 戰情室 🔥", page_icon="📈", layout="wide")
@@ -36,14 +36,13 @@ def load_data(url):
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         df_total = df_total.sort_values('日期').reset_index(drop=True)
         
-        # 5. ***最終修復：極限數值轉換 (使用 re 模組繞過 Pandas 版本限制)***
+        # 5. 極限數值轉換 (使用 re 模組繞過版本限制)
         numeric_cols = ['總資產(TWD)', '台幣現金(TWD)', '外幣現金(EUR)', 
                         '股票成本(USD)', 'ETF(EUR)', '不動產(TWD)', '加密貨幣(USD)', '其他(TWD)', 'USDTWD', 'EURTWD', '總資產增額(TWD)']
         for col in numeric_cols:
             if col in df_total.columns:
                 
                 # 關鍵修復：使用 Python 標準庫 re.sub 進行字串清理
-                # 這樣能保證在任何環境版本下，清理邏輯都能正確執行
                 df_total[col] = df_total[col].astype(str).apply(
                     lambda x: re.sub(r'[^\d\.\-]', '', x)
                 )
@@ -101,7 +100,8 @@ if not df_total.empty and len(df_total) > 0:
             st.rerun()
 
     # --- 關鍵修正：資產值檢查 (Pie Chart Debug) ---
-    st.info(f"💰 **資產值檢查 (最新記錄 {latest['日期'].strftime('%Y/%m')}):** 股票(USD): **${latest['股票成本(USD)']:.2f}**, ETF(EUR): **€{latest['ETF(EUR)']:.2f}**, 加密貨幣(USD): **${latest['加密貨貨幣(USD)']:.2f}**。理論上讀到的原始值。")
+    # TYPO FIXED HERE: '加密貨貨幣(USD)' -> '加密貨幣(USD)'
+    st.info(f"💰 **資產值檢查 (最新記錄 {latest['日期'].strftime('%Y/%m')}):** 股票(USD): **${latest['股票成本(USD)']:.2f}**, ETF(EUR): **€{latest['ETF(EUR)']:.2f}**, 加密貨幣(USD): **${latest['加密貨幣(USD)']:.2f}**。理論上讀到的原始值。")
     st.divider()
 
     # --- 第一排：關鍵指標 (KPI) ---
