@@ -58,6 +58,7 @@ def load_data(url):
 
 # --- 執行讀取 ---
 df_total = load_data(SPREADSHEET_URL)
+st.markdown(f"**Pandas 讀到的所有欄位名稱:** {df_total.columns.tolist()}")
 
 # --- 介面呈現 ---
 st.title("🔥 Jeffy 的 FIRE 戰情室")
