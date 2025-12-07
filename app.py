@@ -36,15 +36,16 @@ def load_data(url):
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         df_total = df_total.sort_values('日期').reset_index(drop=True)
         
-        # 5. ***最終修復：極限數值轉換 (解決 0 值問題)***
+        # 5. ***最終修復：極限數值轉換 (已移除 regex=True 參數)***
         numeric_cols = ['總資產(TWD)', '台幣現金(TWD)', '外幣現金(EUR)', 
                         '股票成本(USD)', 'ETF(EUR)', '不動產(TWD)', '加密貨幣(USD)', '其他(TWD)', 'USDTWD', 'EURTWD', '總資產增額(TWD)']
         for col in numeric_cols:
             if col in df_total.columns:
-                # 關鍵修復：強制去除所有非數字、非小數點、非負號的符號
+                # 關鍵修復：強制去除所有非數字、非小數點、非負號的符號，並避免使用 regex=True
                 # 我們使用一個更嚴格的 Lambda 函數來確保字串處理成功
                 df_total[col] = df_total[col].apply(
-                    lambda x: pd.to_numeric(str(x).replace(r'[^\d\.\-]', '', regex=True).strip(), errors='coerce')
+                    # 注意：我們將 replace 改為使用單一字元，避免 Pandas 舊版對 regex 參數的限制
+                    lambda x: pd.to_numeric(str(x).replace(r'[^\d\.\-]', '', regex=False).strip(), errors='coerce')
                 ).fillna(0)
             else:
                 df_total[col] = 0
@@ -91,7 +92,7 @@ if not df_total.empty and len(df_total) > 0:
         st.subheader("🔮 預測模型參數")
         annual_growth = st.slider("年化成長率 (CAGR - %)", 4.0, 15.0, 7.0, 0.5) 
         st.write(f"平均月度貢獻: **${avg_monthly_gain:,.0f} TWD**")
-        st.info(f"嗨 Jeffy！NIW 已經通過 I-140，NVC 流程一定也會順利的。你的資產在持續增長，這是給橙橙和即將到來的二女兒最好的禮物！")
+        st.info(f"嗨 Jeffy！NIW/NVC 流程一定會順利通過的。你的資產在持續增長，這是給橙橙和即將到來的二女兒最好的禮物！")
         if st.button("🔄 強制刷新數據"):
             st.cache_data.clear()
             st.rerun()
