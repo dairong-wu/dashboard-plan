@@ -33,11 +33,14 @@ def load_data(url):
     try:
         df_total = pd.read_csv(url, header=1) 
         
-        # *** 關鍵修復：超激進欄位清洗 ***
+        # 關鍵修復：清除欄位名稱中的空格
         df_total.columns = df_total.columns.str.strip() 
         
         # 數據清洗與前處理
         df_total = df_total.dropna(subset=['日期', '總資產(TWD)']).copy()
+        
+        # *** 新增：排除未來空行 (解決 2028/12 數據範圍問題) ***
+        df_total = df_total[df_total['總資產(TWD)'] != 0].copy()
         
         # 轉換日期格式 (確保能排序)
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
@@ -45,13 +48,13 @@ def load_data(url):
         
         # 確保關鍵數值欄位是數字，並處理逗號和 NaN
         numeric_cols = ['總資產(TWD)', '台幣現金(TWD)', '外幣現金(EUR)', 
-                        '股票成本(USD)', 'ETF(EUR)', '不動產(TWD)', '加密貨幣(USD)', 'USDTWD', 'EURTWD', '總資產增額(TWD)']
+                        '股票成本(USD)', 'ETF(EUR)', '不動產(TWD)', '加密貨幣(USD)', '其他(TWD)', 'USDTWD', 'EURTWD', '總資產增額(TWD)']
         for col in numeric_cols:
             if col in df_total.columns:
+                # 處理可能存在的逗號（千分位）和多餘符號
                 df_total[col] = df_total[col].astype(str).str.replace(r'[^\d\.\-]', '', regex=True).replace('', np.nan)
                 df_total[col] = pd.to_numeric(df_total[col], errors='coerce').fillna(0)
             else:
-                # 如果欄位真的丟失，用 0 填充，但會在後續的 debug 報錯
                 df_total[col] = 0
 
         return df_total
@@ -62,8 +65,6 @@ def load_data(url):
 
 # --- 執行讀取 ---
 df_total = load_data(SPREADSHEET_URL)
-# 臨時 Debug 程式碼，請手動複製後貼上
-st.markdown(f"**Pandas 讀到的所有欄位名稱:** {df_total.columns.tolist()}")
 
 # --- 介面呈現 ---
 st.title("🔥 Jeffy 的 FIRE 戰情室")
@@ -80,6 +81,11 @@ if not df_total.empty and len(df_total) > 0:
     
     usd_rate = latest['USDTWD'] if 'USDTWD' in latest else 32.5
     eur_rate = latest['EURTWD'] if 'EURTWD' in latest else 35.0
+    
+    # 計算平均每月儲蓄 (只基於非零的歷史紀錄)
+    df_gains = df_total[df_total['總資產增額(TWD)'] > 0]
+    avg_monthly_gain = df_gains['總資產增額(TWD)'].mean() if not df_gains.empty else 0
+    
 
     # --- 側邊欄：個人化設定與預測參數 ---
     with st.sidebar:
@@ -90,18 +96,16 @@ if not df_total.empty and len(df_total) > 0:
         
         st.divider()
         st.subheader("🔮 預測模型參數")
-        # 新增年化成長率輸入 (滿足 Q3)
         annual_growth = st.slider("年化成長率 (CAGR - %)", 4.0, 15.0, 7.0, 0.5) 
-        
-        # 計算平均每月儲蓄 (滿足 Q3)
-        # 只計算有實際增額的歷史紀錄
-        df_gains = df_total[df_total['總資產增額(TWD)'] > 0]
-        avg_monthly_gain = df_gains['總資產增額(TWD)'].mean() if not df_gains.empty else 0
-        st.write(f"平均月度貢獻: **${avg_monthly_gain:,.0f} TWD** (基於歷史增額)")
-        st.info("嗨 Jeffy! NVC 流程是挑戰，但你的資產曲線會給你信心。我們來看看五年後橙橙上大學的資產預測！")
+        st.write(f"平均月度貢獻: **${avg_monthly_gain:,.0f} TWD**")
+        st.info("嗨 Jeffy! 保持專注。NVC 流程一定會順利通過的！")
         if st.button("🔄 強制刷新數據"):
             st.cache_data.clear()
             st.rerun()
+
+    # --- 關鍵修正：資產值檢查 (Pie Chart Debug) ---
+    st.info(f"💰 **資產值檢查 (最新記錄 {latest['日期'].strftime('%Y/%m')}):** 股票(TWD): **${latest['股票成本(USD)'] * usd_rate:,.0f}**, ETF(TWD): **${latest['ETF(EUR)'] * eur_rate:,.0f}**, 加密貨幣(TWD): **${latest['加密貨幣(USD)'] * usd_rate:,.0f}**。如果這些值是 $0，請檢查 Google Sheet 的計算公式。")
+    st.divider()
 
     # --- 第一排：KPI ---
     col1, col2, col3, col4 = st.columns(4)
@@ -119,7 +123,7 @@ if not df_total.empty and len(df_total) > 0:
 
     st.divider()
 
-    # --- 第二排：資產趨勢與配置 (Q2 FIX) ---
+    # --- 第二排：資產趨勢與配置 ---
     col_chart1, col_chart2 = st.columns([2, 1])
 
     with col_chart1:
@@ -129,9 +133,9 @@ if not df_total.empty and len(df_total) > 0:
         st.plotly_chart(fig_trend, use_container_width=True)
 
     with col_chart2:
-        st.subheader("🍰 最新資產配置 (Q2 Fix)")
+        st.subheader("🍰 最新資產配置")
         
-        # *** 圓餅圖修復：使用清理後的欄位名稱，避免 Key Error ***
+        # 圓餅圖數據準備 (使用清理後的欄位名稱)
         assets_dict = {
             '台幣現金': latest['台幣現金(TWD)'],
             '不動產': latest['不動產(TWD)'],
@@ -146,7 +150,7 @@ if not df_total.empty and len(df_total) > 0:
         fig_pie = px.pie(df_pie, values='Value', names='Type', hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
         st.plotly_chart(fig_pie, use_container_width=True)
 
-    # --- 第三排：新預測模型 (Q3 FIX) ---
+    # --- 第三排：預測模型 (CAGR) ---
     st.divider()
     st.subheader("🔮 未來五年資產預測 (CAGR 複合年均增長率)")
     
@@ -184,13 +188,12 @@ if not df_total.empty and len(df_total) > 0:
     final_forecast = df_forecast.iloc[-1]['總資產(TWD)']
     st.info(f"💡 **模型預測：** 假設年化增長率為 **{annual_growth}%** 且每月持續貢獻 **${avg_monthly_gain:,.0f} TWD**，五年後 (約 {df_forecast.iloc[-1]['日期'].strftime('%Y/%m')}) 總資產預計可達 **${final_forecast:,.0f} TWD**。")
 
-    # --- 第四排：Debug 專區 (讓 Jeffy 檢查欄位名) ---
+    # --- 第四排：詳細數據 (用於 Debug) ---
     st.divider()
-    st.markdown("### 📝 **除錯專區：欄位名稱檢查**")
-    st.caption("如果圓餅圖仍缺失資產，請將下方的欄位名稱貼給我。")
-    with st.expander("點擊展開查看原始數據表格與欄位名稱"):
+    st.markdown("### 📝 **原始數據與欄位名稱檢查**")
+    st.caption("以下為程式碼讀取並清理後的原始數據。")
+    with st.expander("點擊展開查看原始數據表格"):
         st.dataframe(df_total.tail(20), use_container_width=True)
-        st.markdown(f"**實際讀取到的所有欄位名稱:** {df_total.columns.tolist()}")
 
 else:
     st.warning("⚠️ 數據讀取失敗。請檢查 Google Sheet 權限、分頁 GID 連結和 `secrets.toml` 設定無誤。")
