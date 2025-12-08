@@ -240,7 +240,7 @@ if not df_total.empty and len(df_total) > 0:
     monthly_in_safe = monthly_contribution * w_safe
 
     car_value = 71000
-    rate_car = 2
+    rate_car = 24
 
     for i in range(1, forecast_months + 1):
         future_date = current_date + relativedelta(months=i)
@@ -250,7 +250,7 @@ if not df_total.empty and len(df_total) > 0:
         curr_crypto = (curr_crypto * (1 + rate_crypto/100/12)) + monthly_in_crypto
         curr_safe = (curr_safe * (1 + rate_safe/100/12)) + monthly_in_safe
         
-        total_forecast = curr_stock + curr_etf + curr_crypto + curr_safe + car_value * ( 1 - rate_car/100/12) * 36
+        total_forecast = curr_stock + curr_etf + curr_crypto + curr_safe + car_value * ( 1 - rate_car/100/12)**24 * 36
         future_data.append({'日期': future_date, 'Effective_Asset': total_forecast})
 
     df_forecast = pd.DataFrame(future_data)
