@@ -105,7 +105,7 @@ if not df_total.empty and len(df_total) > 0:
     # --- 側邊欄 ---
     with st.sidebar:
         st.header("⚙️ 參數設定")
-        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=50000000, step=1000000)
+        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=100000000, step=10000000)
         st.divider()
         
         st.subheader("🔮 分析師估值模型")
