@@ -24,7 +24,6 @@ def load_data(url):
         df_total = pd.read_csv(url, header=1) 
         df_total.columns = df_total.columns.str.strip() 
         
-        # 定義所有相關欄位
         target_cols = [
             '真實總資產(TWD)', '總資產(TWD)',
             '股票價值(USD)', '股票成本(USD)',
@@ -48,11 +47,10 @@ def load_data(url):
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         
         # 3. [關鍵修正] 建立「有效數據」判斷
-        # 我們不只是 dropna，而是要過濾掉那些「日期存在但資產為0」的未來空行
-        # 優先檢查 '真實總資產'，如果沒有就檢查 '總資產'
+        # 邏輯：優先使用 '真實總資產'，如果該月資料為 0 (歷史未填)，則回退使用 '總資產'
         df_total['Effective_Asset'] = np.where(df_total['真實總資產(TWD)'] > 0, df_total['真實總資產(TWD)'], df_total['總資產(TWD)'])
         
-        # 過濾：只保留資產 > 0 的行 (這樣就會把 2026/1 這種空行濾掉)
+        # 過濾：只保留 Effective_Asset > 0 的行 (這樣就會把 2026/1 這種空行濾掉，鎖定 2025/12)
         df_total = df_total[df_total['Effective_Asset'] > 0].copy()
         
         df_total = df_total.sort_values('日期').reset_index(drop=True)
@@ -71,7 +69,6 @@ if not df_total.empty and len(df_total) > 0:
     
     # --- 基礎數據 (現在抓到的一定是有效數據的最後一筆) ---
     latest = df_total.iloc[-1]
-    # 確保有上一筆，否則用同一筆
     prev = df_total.iloc[-2] if len(df_total) > 1 else latest
     
     # 匯率
@@ -80,12 +77,11 @@ if not df_total.empty and len(df_total) > 0:
     usd_rate = raw_usd_rate if raw_usd_rate > 10 else 32.5
     eur_rate = raw_eur_rate if raw_eur_rate > 10 else 35.0
     
-    # --- 資產價值計算 ---
-    # 優先讀取真實價值欄位
+    # --- 資產價值計算 (使用真實價值) ---
     val_stock = latest.get('股票價值(USD)', 0) * usd_rate
     val_etf = latest.get('ETF價值(EUR)', 0) * eur_rate
     
-    # 如果真實價值是 0 (可能使用者還沒填新欄位)，自動 fallback 到成本 (僅供圓餅圖顯示用，不影響總資產KPI)
+    # 如果真實價值是 0，自動 fallback 到成本 (僅供圓餅圖顯示用)
     if val_stock == 0: val_stock = latest.get('股票成本(USD)', 0) * usd_rate
     if val_etf == 0: val_etf = latest.get('ETF(EUR)', 0) * eur_rate
 
@@ -95,8 +91,7 @@ if not df_total.empty and len(df_total) > 0:
     val_real_estate = latest.get('不動產(TWD)', 0)
     val_other = latest.get('其他(TWD)', 0)
     
-    # --- 總資產 KPI ---
-    # 這裡直接用我們過濾過的 Effective_Asset，它優先是真實總資產
+    # --- [關鍵] 總資產 KPI - 不再有 fallback ---
     current_assets = latest['Effective_Asset']
     prev_assets = prev['Effective_Asset']
     
@@ -148,7 +143,6 @@ if not df_total.empty and len(df_total) > 0:
             st.rerun()
 
     # --- 邏輯運算 ---
-    # 分母使用真實資產
     total_val = current_assets if current_assets > 0 else 1
     w_stock = val_stock / total_val
     w_etf = val_etf / total_val
@@ -274,8 +268,9 @@ if not df_total.empty and len(df_total) > 0:
     st.success(f"🎯 **模擬結果：** {forecast_years} 年後總資產預估 **${final_val:,.0f} TWD**。")
 
     # Debug
-    with st.expander("🔍 數據除錯 (Debug)"):
-        st.write("最新一筆有效日期:", latest['日期'])
+    with st.expander("🔍 **數據除錯 (Debug)**"):
+        st.subheader("最新一筆有效數據 (已過濾未來空行)")
+        st.write(f"最新日期: **{latest['日期'].strftime('%Y/%m')}**")
         st.dataframe(df_total.tail(5))
 
 else:
