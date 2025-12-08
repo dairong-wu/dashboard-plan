@@ -8,16 +8,28 @@ from dateutil.relativedelta import relativedelta
 import re 
 
 # --- 設定頁面資訊 ---
-st.set_page_config(page_title="Jeffy's FIRE 戰情室 🔥", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Jeffy's FIRE 戰情室 🔥", page_icon="🛡️", layout="wide")
 
-# --- 讀取 Secrets 中的 URL ---
+# --- CSS 優化 ---
+st.markdown("""
+<style>
+    .stMetric {
+        background-color: #1E1E1E;
+        border: 1px solid #333;
+        padding: 15px;
+        border-radius: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 讀取 Secrets ---
 try:
     SPREADSHEET_URL = st.secrets["data"]["sheet_url"]
 except KeyError:
-    st.error("⚠️ **Secrets 錯誤:** 請確認您的 `secrets.toml` 中有設定 `[data]` 和 `sheet_url`。")
+    st.error("⚠️ Secrets Error")
     st.stop() 
 
-# --- 讀取數據函數 ---
+# --- 讀取數據函數 (保留最強力清洗邏輯) ---
 @st.cache_data(ttl=10) 
 def load_data(url):
     try:
@@ -25,34 +37,34 @@ def load_data(url):
         df_total.columns = df_total.columns.str.strip() 
         
         target_cols = [
-            '真實總資產(TWD)', '總資產(TWD)',
-            '股票價值(USD)', '股票成本(USD)',
-            'ETF價值(EUR)', 'ETF(EUR)',
+            '真實總資產(TWD)', '總資產(TWD)', '總資產+汽車折舊', '汽車預估價格(GPT模型)',
+            '股票價值(USD)', '股票成本(USD)', 
+            'ETF價值(EUR)', 'ETF(EUR)', 
             '台幣現金(TWD)', '外幣現金(EUR)', '不動產(TWD)', 
             '加密貨幣(USD)', '其他(TWD)', 
             'USDTWD', 'EURTWD', '總資產增額(TWD)'
         ]
         
-        # 1. 強力清洗：轉純數字
         for col in target_cols:
             if col in df_total.columns:
-                df_total[col] = df_total[col].astype(str).apply(
-                    lambda x: re.sub(r'[^\d\.\-]', '', x)
-                )
+                # 先移除逗號，再移除非數字
+                cleaned = df_total[col].astype(str).str.replace(',', '', regex=False)
+                df_total[col] = cleaned.apply(lambda x: re.sub(r'[^\d\.\-]', '', x))
                 df_total[col] = pd.to_numeric(df_total[col], errors='coerce').fillna(0)
             else:
                 df_total[col] = 0
 
-        # 2. 轉換日期
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         
-        # 3. [關鍵修正] 建立「有效數據」判斷
-        # 邏輯：優先使用 '真實總資產'，如果該月資料為 0 (歷史未填)，則回退使用 '總資產'
-        df_total['Effective_Asset'] = np.where(df_total['真實總資產(TWD)'] > 0, df_total['真實總資產(TWD)'], df_total['總資產(TWD)'])
+        # 建立有效資產 (優先取真實總資產)
+        df_total['Effective_Asset'] = np.where(
+            df_total['真實總資產(TWD)'] > 0, 
+            df_total['真實總資產(TWD)'], 
+            df_total['總資產+汽車折舊']
+        )
         
-        # 過濾：只保留 Effective_Asset > 0 的行 (這樣就會把 2026/1 這種空行濾掉，鎖定 2025/12)
+        # 過濾無效行
         df_total = df_total[df_total['Effective_Asset'] > 0].copy()
-        
         df_total = df_total.sort_values('日期').reset_index(drop=True)
         
         return df_total
@@ -63,218 +75,253 @@ def load_data(url):
 df_total = load_data(SPREADSHEET_URL)
 
 # --- 介面呈現 ---
-st.title("🔥 Jeffy 的 FIRE 戰情室 - Pro Valuation Edition")
+st.title("🛡️ Jeffy's FIRE Command Center")
 
 if not df_total.empty and len(df_total) > 0:
     
-    # --- 基礎數據 (現在抓到的一定是有效數據的最後一筆) ---
+    # --- 基礎數據準備 ---
     latest = df_total.iloc[-1]
     prev = df_total.iloc[-2] if len(df_total) > 1 else latest
     
     # 匯率
-    raw_usd_rate = latest.get('USDTWD', 0)
-    raw_eur_rate = latest.get('EURTWD', 0)
-    usd_rate = raw_usd_rate if raw_usd_rate > 10 else 32.5
-    eur_rate = raw_eur_rate if raw_eur_rate > 10 else 35.0
+    usd_rate = latest.get('USDTWD', 32.5) if latest.get('USDTWD', 0) > 10 else 32.5
+    eur_rate = latest.get('EURTWD', 35.0) if latest.get('EURTWD', 0) > 10 else 35.0
     
-    # --- 資產價值計算 (使用真實價值) ---
-    val_stock = latest.get('股票價值(USD)', 0) * usd_rate
-    val_etf = latest.get('ETF價值(EUR)', 0) * eur_rate
+    # --- 資產價值 (Market Value) ---
+    # 優先取市值，若無則取成本
+    stock_val = latest.get('股票價值(USD)', 0) * usd_rate
+    if stock_val == 0: stock_val = latest.get('股票成本(USD)', 0) * usd_rate
     
-    # 如果真實價值是 0，自動 fallback 到成本 (僅供圓餅圖顯示用)
-    if val_stock == 0: val_stock = latest.get('股票成本(USD)', 0) * usd_rate
-    if val_etf == 0: val_etf = latest.get('ETF(EUR)', 0) * eur_rate
+    etf_val = latest.get('ETF價值(EUR)', 0) * eur_rate
+    if etf_val == 0: etf_val = latest.get('ETF(EUR)', 0) * eur_rate
 
-    val_crypto = latest.get('加密貨幣(USD)', 0) * usd_rate
-    val_foreign_cash = latest.get('外幣現金(EUR)', 0) * eur_rate
-    val_twd_cash = latest.get('台幣現金(TWD)', 0)
-    val_real_estate = latest.get('不動產(TWD)', 0)
-    val_other = latest.get('其他(TWD)', 0)
-    
-    # --- [關鍵] 總資產 KPI - 不再有 fallback ---
-    current_assets = latest['Effective_Asset']
-    prev_assets = prev['Effective_Asset']
-    
-    month_diff = current_assets - prev_assets
-    growth_rate = (month_diff / prev_assets) * 100 if prev_assets != 0 else 0
-    
-    # 歷史平均月儲蓄
-    df_gains = df_total[df_total['總資產增額(TWD)'] > 0]
-    historical_avg_gain = df_gains['總資產增額(TWD)'].mean() if not df_gains.empty else 50000
+    crypto_val = latest.get('加密貨幣(USD)', 0) * usd_rate
+    fx_cash_val = latest.get('外幣現金(EUR)', 0) * eur_rate
+    twd_cash_val = latest.get('台幣現金(TWD)', 0)
+    real_estate_val = latest.get('不動產(TWD)', 0)
+    other_val = latest.get('其他(TWD)', 0)
+    car_val = latest.get('汽車預估價格(GPT模型)', 0)
 
-    # --- 側邊欄 ---
+    # --- 資產成本 (Cost Basis) 估算 ---
+    stock_cost = latest.get('股票成本(USD)', 0) * usd_rate
+    etf_cost = latest.get('ETF(EUR)', 0) * eur_rate
+    
+    total_market_val = latest['Effective_Asset']
+    
+    # --- 側邊欄：還原 V01 的詳細設定 ---
     with st.sidebar:
-        st.header("⚙️ 參數設定")
-        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=100000000, step=10000000)
+        st.header("⚙️ 戰情室參數")
+        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=50000000, step=1000000)
         st.divider()
+        monthly_expense = st.number_input("退休後月開銷 (TWD)", value=100000, step=5000)
         
-        st.subheader("🔮 分析師估值模型")
-        forecast_years = st.slider("模擬未來年數", 1, 27, 5)
+        st.divider()
+        st.subheader("🔮 分析師估值模型 (SOP)")
+        st.caption("還原：各類資產獨立成長率設定")
+        
+        forecast_years = st.slider("模擬未來年數", 1, 15, 5)
 
+        # 1. 情境選擇
         scenario = st.selectbox(
-            "選擇分析師/市場情境",
-            ("自訂 (Custom)", "Cathie Wood - 科技牛市", "Wall Street Consensus", "Ray Dalio - 穩健防禦", "Michael Burry - 衰退修正")
+            "選擇市場情境",
+            ("自訂 (Custom)", 
+             "Cathie Wood (Ark Invest) - 科技牛市", 
+             "Wall Street Consensus - 華爾街共識", 
+             "Ray Dalio (All Weather) - 穩健防禦", 
+             "Michael Burry (The Big Short) - 衰退修正")
         )
 
+        # 2. 預設參數邏輯
         if "Cathie Wood" in scenario:
-            def_stock_rate, def_etf_rate, def_safe_rate = 25.0, 12.0, 2.0
+            def_stock, def_etf, def_crypto, def_safe = 25.0, 12.0, 50.0, 2.0
         elif "Wall Street" in scenario:
-            def_stock_rate, def_etf_rate, def_safe_rate = 12.0, 8.0, 1.5
+            def_stock, def_etf, def_crypto, def_safe = 10.0, 8.0, 15.0, 1.5
         elif "Ray Dalio" in scenario:
-            def_stock_rate, def_etf_rate, def_safe_rate = 6.0, 5.0, 1.5
+            def_stock, def_etf, def_crypto, def_safe = 6.0, 5.0, 5.0, 2.0
         elif "Michael Burry" in scenario:
-            def_stock_rate, def_etf_rate, def_safe_rate = -10.0, -5.0, 1.0
-        else: 
-            def_stock_rate, def_etf_rate, def_safe_rate = 15.0, 7.0, 1.0
+            def_stock, def_etf, def_crypto, def_safe = -10.0, -5.0, -20.0, 1.0
+        else: # 自訂
+            def_stock, def_etf, def_crypto, def_safe = 15.0, 7.0, 20.0, 1.0
 
+        # 3. 細項成長率設定 (可手動微調)
         st.markdown("**各類資產預期年化報酬率 (CAGR)**")
         col_s1, col_s2 = st.columns(2)
-        rate_stock = col_s1.number_input("個股", value=def_stock_rate, step=0.5, format="%.1f")
-        rate_etf = col_s2.number_input("ETF", value=def_etf_rate, step=0.5, format="%.1f")
+        rate_stock = col_s1.number_input("個股 (NVDA/TSLA)", value=def_stock, step=0.5, format="%.1f")
+        rate_etf = col_s2.number_input("ETF (大盤)", value=def_etf, step=0.5, format="%.1f")
         
         col_s3, col_s4 = st.columns(2)
-        rate_crypto = col_s3.number_input("加密貨幣", value=rate_stock if "自訂" in scenario else 20.0, step=1.0, format="%.1f")
-        rate_safe = col_s4.number_input("房產/現金", value=def_safe_rate, step=0.1, format="%.1f")
-
-        monthly_contribution = st.number_input("每月投入資金 (TWD)", value=int(historical_avg_gain), step=5000)
+        rate_crypto = col_s3.number_input("加密貨幣", value=def_crypto, step=1.0, format="%.1f")
+        rate_safe = col_s4.number_input("房產/現金", value=def_safe, step=0.1, format="%.1f")
         
-        if st.button("🔄 刷新數據"):
+        st.markdown("**折舊與投入**")
+        car_depreciation_rate = st.slider("汽車年折舊率 (%)", 5.0, 30.0, 15.0, 1.0)
+        
+        df_gains = df_total[df_total['總資產增額(TWD)'] > 0]
+        hist_avg_gain = df_gains['總資產增額(TWD)'].mean() if not df_gains.empty else 50000
+        monthly_contribution = st.number_input("每月投入 (TWD)", value=int(hist_avg_gain), step=5000)
+        
+        if st.button("🔄 刷新"):
             st.cache_data.clear()
             st.rerun()
 
-    # --- 邏輯運算 ---
-    total_val = current_assets if current_assets > 0 else 1
-    w_stock = val_stock / total_val
-    w_etf = val_etf / total_val
-    w_crypto = val_crypto / total_val
-    w_safe = (val_twd_cash + val_foreign_cash + val_real_estate + val_other) / total_val
+    # --- 計算權重 (用於顯示) ---
+    total_investable = total_market_val - car_val
+    if total_investable <= 0: total_investable = 1
     
-    w_sum = w_stock + w_etf + w_crypto + w_safe
-    if w_sum > 0:
-        w_stock /= w_sum
-        w_etf /= w_sum
-        w_crypto /= w_sum
-        w_safe /= w_sum
-        
+    w_stock = stock_val / total_investable
+    w_etf = etf_val / total_investable
+    w_crypto = crypto_val / total_investable
+    w_safe = (twd_cash_val + fx_cash_val + real_estate_val + other_val) / total_investable
+    
+    # 綜合年化成長率 (Weighted CAGR) - 僅供參考，實際預測用分項複利
     weighted_cagr = (w_stock * rate_stock) + (w_etf * rate_etf) + (w_crypto * rate_crypto) + (w_safe * rate_safe)
 
-    # --- KPI 區塊 ---
+    # --- Row 1: KPI ---
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("💰 真實總資產 (TWD)", f"${current_assets:,.0f}", f"{month_diff:,.0f} ({growth_rate:.2f}%)")
+        diff = latest['Effective_Asset'] - prev['Effective_Asset']
+        pct = (diff / prev['Effective_Asset']) * 100 if prev['Effective_Asset'] != 0 else 0
+        st.metric("💰 真實總淨值", f"${total_market_val:,.0f}", f"{diff:,.0f} ({pct:.2f}%)")
     with col2:
-        st.metric("📊 隱含CAGR", f"{weighted_cagr:.2f}%", f"情境: {scenario.split(' - ')[0]}")
+        st.metric("📊 投資組合隱含CAGR", f"{weighted_cagr:.2f}%", f"情境: {scenario.split('-')[0]}")
     with col3:
-        passive_monthly = (current_assets * 0.04) / 12
-        st.metric("🛌 4%法則月收", f"${passive_monthly:,.0f}")
+        runway = total_market_val / (monthly_expense * 12)
+        st.metric("⏳ 財務跑道", f"{runway:.1f} 年", f"月開銷 ${monthly_expense:,.0f}")
     with col4:
-        total_eur_est = current_assets / eur_rate
-        st.metric("🇪🇺 總資產 (EUR)", f"€{total_eur_est:,.0f}", f"Rate: {eur_rate}")
+        passive = (total_market_val * 0.04) / 12
+        st.metric("🛡️ 4%法則月收", f"${passive:,.0f}", f"目標: ${monthly_expense:,.0f}")
 
     st.divider()
 
-    # --- 圖表區 ---
-    col_chart1, col_chart2 = st.columns([2, 1])
+    # --- Row 2: 核心圖表 ---
+    col_main, col_tree = st.columns([1.8, 1.2])
 
-    with col_chart1:
-        st.subheader("📈 資產累積趨勢 (真實價值)")
-        fig_trend = px.line(df_total, x='日期', y='Effective_Asset', markers=True, title='Net Worth Growth (Real Value)', template="plotly_dark")
-        fig_trend.update_traces(line_color='#00CC96', line_width=3)
+    with col_main:
+        st.subheader("📈 歷史淨值走勢 (History)")
+        fig_trend = px.line(df_total, x='日期', y='Effective_Asset', markers=True, template="plotly_dark")
+        fig_trend.update_traces(line=dict(width=3, color='#00CC96')) # 移除 connectgaps 避免 Plotly 版本問題
+        
+        fig_trend.update_layout(
+            xaxis=dict(rangeslider=dict(visible=True), type="date"),
+            margin=dict(l=20, r=20, t=20, b=20),
+            height=400
+        )
         st.plotly_chart(fig_trend, use_container_width=True)
 
-    with col_chart2:
-        st.subheader("🍰 資產權重分布")
-        assets_dict_detail = {
-            '不動產': val_real_estate,
-            '美股 (市值)': val_stock, 
-            '台幣現金': val_twd_cash,
-            '歐股/ETF (市值)': val_etf, 
-            '外幣現金': val_foreign_cash,
-            '加密貨幣': val_crypto,
-            '其他': val_other
-        }
-        
-        df_display = pd.DataFrame([
-            {'資產種類': k, '金額(TWD)': v, 'Raw_Value': v} 
-            for k, v in assets_dict_detail.items() if v > 0
-        ])
-        
-        if not df_display.empty:
-            total_display_val = df_display['Raw_Value'].sum()
-            df_display['占比(%)'] = (df_display['Raw_Value'] / total_display_val * 100)
-            df_display = df_display.sort_values(by='Raw_Value', ascending=False)
-            
-            fig_pie = px.pie(df_display, values='Raw_Value', names='資產種類', hole=0.4, 
-                             color_discrete_sequence=px.colors.sequential.RdBu)
-            st.plotly_chart(fig_pie, use_container_width=True)
-            
-            df_table = df_display[['資產種類', '金額(TWD)', '占比(%)']].copy()
-            df_table['金額(TWD)'] = df_table['金額(TWD)'].map('${:,.0f}'.format)
-            df_table['占比(%)'] = df_table['占比(%)'].map('{:.2f}%'.format)
-            st.dataframe(df_table, use_container_width=True, hide_index=True)
-        else:
-            st.warning("無有效資產數據")
+    with col_tree:
+        st.subheader("🗺️ 資產板塊 (Asset Map)")
+        # [修復 Treemap] 使用 go.Treemap 確保顯示
+        labels = ["總資產", "投資組合", "防禦資產", "消費資產", "美股", "歐股 ETF", "加密貨幣", "不動產", "台幣現金", "外幣現金", "汽車", "其他"]
+        parents = ["", "總資產", "總資產", "總資產", "投資組合", "投資組合", "投資組合", "防禦資產", "防禦資產", "防禦資產", "消費資產", "消費資產"]
+        values = [0, 0, 0, 0, stock_val, etf_val, crypto_val, real_estate_val, twd_cash_val, fx_cash_val, car_val, other_val]
+        colors = ["lightgrey", "lightgrey", "lightgrey", "lightgrey", "#FF4B4B", "#FFA500", "#9370DB", "#2E8B57", "#00CC96", "#20B2AA", "#708090", "#A9A9A9"]
 
-    # --- 預測模型區 ---
+        fig_tree = go.Figure(go.Treemap(
+            labels = labels,
+            parents = parents,
+            values = values,
+            marker = dict(colors=colors),
+            branchvalues = "total",
+            textinfo = "label+value+percent parent"
+        ))
+        fig_tree.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=400)
+        st.plotly_chart(fig_tree, use_container_width=True)
+
+    # --- Row 3: 損益與貨幣 ---
+    col_pnl, col_curr = st.columns(2)
+
+    with col_pnl:
+        st.subheader("📊 未實現損益 (P&L)")
+        pnl_data = {
+            '美股': stock_val - stock_cost,
+            'ETF': etf_val - etf_cost,
+            '加密貨幣': crypto_val * 0.2, 
+        }
+        df_pnl = pd.DataFrame(list(pnl_data.items()), columns=['Asset', 'PnL'])
+        df_pnl['Color'] = np.where(df_pnl['PnL'] >= 0, '#00CC96', '#FF4B4B')
+        
+        fig_pnl = px.bar(df_pnl, x='PnL', y='Asset', orientation='h', text='PnL',
+                         title="各類資產損益貢獻 (估)", template="plotly_dark")
+        fig_pnl.update_traces(marker_color=df_pnl['Color'], texttemplate='%{text:,.0f}', textposition='auto')
+        st.plotly_chart(fig_pnl, use_container_width=True)
+
+    with col_curr:
+        st.subheader("🌍 貨幣曝險")
+        usd_exp = stock_val + crypto_val
+        eur_exp = etf_val + fx_cash_val
+        twd_exp = twd_cash_val + real_estate_val + other_val + car_val
+        
+        fig_pie = px.pie(
+            values=[usd_exp, eur_exp, twd_exp], 
+            names=['USD (美元)', 'EUR (歐元)', 'TWD (台幣)'],
+            color_discrete_sequence=['#00CC96', '#636EFA', '#EF553B'],
+            hole=0.5
+        )
+        fig_pie.update_layout(showlegend=True, height=350)
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    # --- Row 4: 預測模型 (分項複利) ---
     st.divider()
-    st.subheader(f"🔮 {forecast_years} 年資產模擬 (加權成分成長模型)")
+    st.subheader(f"🔮 未來 {forecast_years} 年資產模擬 (分項複利)")
+    
     st.info(f"""
-    **模型邏輯 (基於真實價值)：**
-    - **{w_stock*100:.1f}%** 個股 (CAGR {rate_stock}%) | **{w_etf*100:.1f}%** ETF (CAGR {rate_etf}%)
-    - **{w_crypto*100:.1f}%** 加密 (CAGR {rate_crypto}%) | **{w_safe*100:.1f}%** 防禦 (CAGR {rate_safe}%)
-    👉 **綜合年化成長率 (Weighted CAGR): {weighted_cagr:.2f}%**
+    **模型參數：**
+    - 美股成長: **{rate_stock}%** | ETF成長: **{rate_etf}%** | 加密成長: **{rate_crypto}%**
+    - 房產/現金成長: **{rate_safe}%** | 汽車折舊: **{car_depreciation_rate}%**
+    - 每月投入: **${monthly_contribution:,.0f}**
     """)
 
-    current_date = latest['日期']
-    forecast_months = forecast_years * 12
-    future_data = []
+    curr_date = latest['日期']
+    months = forecast_years * 12
     
-    curr_stock = val_stock
-    curr_etf = val_etf
-    curr_crypto = val_crypto
-    curr_safe = val_twd_cash + val_foreign_cash + val_real_estate + val_other
+    # 初始值
+    curr_stock = stock_val
+    curr_etf = etf_val
+    curr_crypto = crypto_val
+    curr_safe = twd_cash_val + fx_cash_val + real_estate_val + other_val
+    curr_car = car_val
     
-    monthly_in_stock = monthly_contribution * w_stock
-    monthly_in_etf = monthly_contribution * w_etf
-    monthly_in_crypto = monthly_contribution * w_crypto
-    monthly_in_safe = monthly_contribution * w_safe
+    # 投入分配 (假設按目前投資比例分配投入)
+    # 若目前無投資，則全數投入 safe
+    invest_sum = stock_val + etf_val + crypto_val + curr_safe
+    if invest_sum == 0: invest_sum = 1
+    
+    alloc_stock = monthly_contribution * (stock_val / invest_sum)
+    alloc_etf = monthly_contribution * (etf_val / invest_sum)
+    alloc_crypto = monthly_contribution * (crypto_val / invest_sum)
+    alloc_safe = monthly_contribution * (curr_safe / invest_sum)
 
-    car_value = 71000
-    rate_car = 24
-
-    for i in range(1, forecast_months + 1):
-        future_date = current_date + relativedelta(months=i)
+    future_vals = []
+    for i in range(1, months + 1):
+        d = curr_date + relativedelta(months=i)
         
-        curr_stock = (curr_stock * (1 + rate_stock/100/12)) + monthly_in_stock
-        curr_etf = (curr_etf * (1 + rate_etf/100/12)) + monthly_in_etf
-        curr_crypto = (curr_crypto * (1 + rate_crypto/100/12)) + monthly_in_crypto
-        curr_safe = (curr_safe * (1 + rate_safe/100/12)) + monthly_in_safe
+        # 分別複利
+        curr_stock = (curr_stock * (1 + rate_stock/100/12)) + alloc_stock
+        curr_etf = (curr_etf * (1 + rate_etf/100/12)) + alloc_etf
+        curr_crypto = (curr_crypto * (1 + rate_crypto/100/12)) + alloc_crypto
+        curr_safe = (curr_safe * (1 + rate_safe/100/12)) + alloc_safe
         
-        total_forecast = curr_stock + curr_etf + curr_crypto + curr_safe + car_value * ( 1 - rate_car/100/12)**24 * 36
-        future_data.append({'日期': future_date, 'Effective_Asset': total_forecast})
-
-    df_forecast = pd.DataFrame(future_data)
+        # 汽車折舊
+        curr_car = curr_car * (1 - car_depreciation_rate/100/12)
+        if curr_car < 0: curr_car = 0
+        
+        total = curr_stock + curr_etf + curr_crypto + curr_safe + curr_car
+        future_vals.append({'日期': d, 'Effective_Asset': total})
+        
+    df_fut = pd.DataFrame(future_vals)
+    df_hist = df_total[['日期', 'Effective_Asset']].copy()
+    df_hist['Type'] = 'History'
+    df_fut['Type'] = 'Forecast'
+    df_final = pd.concat([df_hist, df_fut])
     
-    df_history = df_total[['日期', 'Effective_Asset']].copy()
-    df_history['Type'] = '歷史紀錄'
-    df_forecast['Type'] = '未來預測'
-    df_combined = pd.concat([df_history, df_forecast])
+    fig_cast = px.line(df_final, x='日期', y='Effective_Asset', color='Type', 
+                       template="plotly_dark", color_discrete_map={'History': '#00CC96', 'Forecast': '#FFA500'})
     
-    fig_forecast = px.line(df_combined, x='日期', y='Effective_Asset', color='Type',
-                           title=f'情境模擬: {scenario} (綜合 CAGR {weighted_cagr:.2f}%)', 
-                           template="plotly_dark",
-                           color_discrete_map={'歷史紀錄': '#00CC96', '未來預測': '#FFA500'})
-    fig_forecast.update_traces(selector=dict(name='未來預測'), line=dict(dash='dot'))
-    st.plotly_chart(fig_forecast, use_container_width=True)
+    fig_cast.add_hline(y=fire_goal, line_dash="dot", line_color="red", annotation_text=f"FIRE Goal")
+    st.plotly_chart(fig_cast, use_container_width=True)
     
-    final_val = df_forecast.iloc[-1]['Effective_Asset']
-    st.success(f"🎯 **模擬結果：** {forecast_years} 年後總資產預估 **${final_val:,.0f} TWD**。")
-
-    # Debug
-    #with st.expander("🔍 **數據除錯 (Debug)**"):
-    #    st.subheader("最新一筆有效數據 (已過濾未來空行)")
-    #    st.write(f"最新日期: **{latest['日期'].strftime('%Y/%m')}**")
-    #    st.dataframe(df_total.tail(5))
+    final_v = df_fut.iloc[-1]['Effective_Asset']
+    st.success(f"🎯 **預測結果：** {forecast_years} 年後資產約 **${final_v:,.0f}**")
 
 else:
-    st.warning("⚠️ 讀取失敗，請確認 secrets.toml 設定。")
+    st.warning("⚠️ 讀取失敗")
