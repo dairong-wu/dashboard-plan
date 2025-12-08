@@ -24,9 +24,8 @@ def load_data(url):
         df_total = pd.read_csv(url, header=1) 
         df_total.columns = df_total.columns.str.strip() 
         
-        # 定義我們 "指定" 要用的欄位 (不 fallback)
-        # 請確保 Google Sheet 欄位名稱一字不差
-        cols_to_clean = [
+        # 定義所有相關欄位
+        target_cols = [
             '真實總資產(TWD)', '總資產(TWD)',
             '股票價值(USD)', '股票成本(USD)',
             'ETF價值(EUR)', 'ETF(EUR)',
@@ -35,32 +34,29 @@ def load_data(url):
             'USDTWD', 'EURTWD', '總資產增額(TWD)'
         ]
         
-        # 強力清洗：不管原本是什麼格式，全部轉成純數字
-        for col in cols_to_clean:
+        # 1. 強力清洗：轉純數字
+        for col in target_cols:
             if col in df_total.columns:
                 df_total[col] = df_total[col].astype(str).apply(
                     lambda x: re.sub(r'[^\d\.\-]', '', x)
                 )
                 df_total[col] = pd.to_numeric(df_total[col], errors='coerce').fillna(0)
             else:
-                # 如果欄位不存在，填 0 (這會在 Debug 區顯示出來)
                 df_total[col] = 0
 
-        # 這裡我們只刪除日期是空的行，保留資產是 0 的行以便 Debug
-        df_total = df_total.dropna(subset=['日期']).copy()
-        
-        # 轉換日期
+        # 2. 轉換日期
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
+        
+        # 3. [關鍵修正] 建立「有效數據」判斷
+        # 我們不只是 dropna，而是要過濾掉那些「日期存在但資產為0」的未來空行
+        # 優先檢查 '真實總資產'，如果沒有就檢查 '總資產'
+        df_total['Effective_Asset'] = np.where(df_total['真實總資產(TWD)'] > 0, df_total['真實總資產(TWD)'], df_total['總資產(TWD)'])
+        
+        # 過濾：只保留資產 > 0 的行 (這樣就會把 2026/1 這種空行濾掉)
+        df_total = df_total[df_total['Effective_Asset'] > 0].copy()
+        
         df_total = df_total.sort_values('日期').reset_index(drop=True)
         
-        # 為了畫趨勢圖好看，我們還是做一個 Display Column，但 KPI 不用它
-        # 邏輯：歷史數據若無真實總資產，才用舊資產補，避免斷層
-        df_total['Trend_Assets'] = np.where(
-            df_total['真實總資產(TWD)'] > 0, 
-            df_total['真實總資產(TWD)'], 
-            df_total['總資產(TWD)']
-        )
-
         return df_total
     except Exception as e:
         st.error(f"⚠️ 數據讀取錯誤: {e}") 
@@ -73,9 +69,9 @@ st.title("🔥 Jeffy 的 FIRE 戰情室 - Pro Valuation Edition")
 
 if not df_total.empty and len(df_total) > 0:
     
-    # --- 基礎數據 ---
-    # 確保抓到最後一筆有日期的資料
+    # --- 基礎數據 (現在抓到的一定是有效數據的最後一筆) ---
     latest = df_total.iloc[-1]
+    # 確保有上一筆，否則用同一筆
     prev = df_total.iloc[-2] if len(df_total) > 1 else latest
     
     # 匯率
@@ -84,35 +80,30 @@ if not df_total.empty and len(df_total) > 0:
     usd_rate = raw_usd_rate if raw_usd_rate > 10 else 32.5
     eur_rate = raw_eur_rate if raw_eur_rate > 10 else 35.0
     
-    # --- [絕對鎖定] 資產價值計算 ---
-    # 這裡不再做 fallback，直接讀取新欄位
-    # 如果 Google Sheet 該欄位是空值或 0，這裡就會顯示 0
+    # --- 資產價值計算 ---
+    # 優先讀取真實價值欄位
     val_stock = latest.get('股票價值(USD)', 0) * usd_rate
     val_etf = latest.get('ETF價值(EUR)', 0) * eur_rate
     
-    # 如果新欄位真的是 0，我們在 Debug 區提示，但不自動切換
-    # (除非你希望程式碼自動用成本價去補，但我先遵照「真實價值」的指令)
-    
+    # 如果真實價值是 0 (可能使用者還沒填新欄位)，自動 fallback 到成本 (僅供圓餅圖顯示用，不影響總資產KPI)
+    if val_stock == 0: val_stock = latest.get('股票成本(USD)', 0) * usd_rate
+    if val_etf == 0: val_etf = latest.get('ETF(EUR)', 0) * eur_rate
+
     val_crypto = latest.get('加密貨幣(USD)', 0) * usd_rate
     val_foreign_cash = latest.get('外幣現金(EUR)', 0) * eur_rate
     val_twd_cash = latest.get('台幣現金(TWD)', 0)
     val_real_estate = latest.get('不動產(TWD)', 0)
     val_other = latest.get('其他(TWD)', 0)
     
-    # --- [絕對鎖定] 總資產 KPI ---
-    # 強制使用 '真實總資產(TWD)'
-    current_assets = latest['真實總資產(TWD)']
-    prev_assets = prev['真實總資產(TWD)']
-    
-    # 如果真實總資產是 0 (讀取失敗)，給出強烈警告，而不是默默切換
-    if current_assets == 0:
-        st.error(f"⚠️ 警告：最新日期的 '真實總資產(TWD)' 讀取為 0。請檢查 Google Sheet 欄位名稱是否完全一致，或該儲存格是否為空。目前顯示舊欄位數據供參考：${latest['總資產(TWD)']:,.0f}")
-        # 為了不讓介面太難看，暫時用舊的顯示，但已經發出紅字警告
-        current_assets = latest['總資產(TWD)']
+    # --- 總資產 KPI ---
+    # 這裡直接用我們過濾過的 Effective_Asset，它優先是真實總資產
+    current_assets = latest['Effective_Asset']
+    prev_assets = prev['Effective_Asset']
     
     month_diff = current_assets - prev_assets
     growth_rate = (month_diff / prev_assets) * 100 if prev_assets != 0 else 0
     
+    # 歷史平均月儲蓄
     df_gains = df_total[df_total['總資產增額(TWD)'] > 0]
     historical_avg_gain = df_gains['總資產增額(TWD)'].mean() if not df_gains.empty else 50000
 
@@ -164,7 +155,6 @@ if not df_total.empty and len(df_total) > 0:
     w_crypto = val_crypto / total_val
     w_safe = (val_twd_cash + val_foreign_cash + val_real_estate + val_other) / total_val
     
-    # 正規化權重 (避免因部分資產未納入導致總和 != 1)
     w_sum = w_stock + w_etf + w_crypto + w_safe
     if w_sum > 0:
         w_stock /= w_sum
@@ -193,9 +183,8 @@ if not df_total.empty and len(df_total) > 0:
     col_chart1, col_chart2 = st.columns([2, 1])
 
     with col_chart1:
-        st.subheader("📈 資產累積趨勢 (含真實價值修正)")
-        # 這裡用 Trend_Assets 以保持歷史連貫性，但最新點會是真實資產
-        fig_trend = px.line(df_total, x='日期', y='Trend_Assets', markers=True, title='Net Worth Growth', template="plotly_dark")
+        st.subheader("📈 資產累積趨勢 (真實價值)")
+        fig_trend = px.line(df_total, x='日期', y='Effective_Asset', markers=True, title='Net Worth Growth (Real Value)', template="plotly_dark")
         fig_trend.update_traces(line_color='#00CC96', line_width=3)
         st.plotly_chart(fig_trend, use_container_width=True)
 
@@ -265,32 +254,28 @@ if not df_total.empty and len(df_total) > 0:
         curr_safe = (curr_safe * (1 + rate_safe/100/12)) + monthly_in_safe
         
         total_forecast = curr_stock + curr_etf + curr_crypto + curr_safe
-        future_data.append({'日期': future_date, 'Trend_Assets': total_forecast})
+        future_data.append({'日期': future_date, 'Effective_Asset': total_forecast})
 
     df_forecast = pd.DataFrame(future_data)
     
-    df_history = df_total[['日期', 'Trend_Assets']].copy()
+    df_history = df_total[['日期', 'Effective_Asset']].copy()
     df_history['Type'] = '歷史紀錄'
     df_forecast['Type'] = '未來預測'
     df_combined = pd.concat([df_history, df_forecast])
     
-    fig_forecast = px.line(df_combined, x='日期', y='Trend_Assets', color='Type',
+    fig_forecast = px.line(df_combined, x='日期', y='Effective_Asset', color='Type',
                            title=f'情境模擬: {scenario} (綜合 CAGR {weighted_cagr:.2f}%)', 
                            template="plotly_dark",
                            color_discrete_map={'歷史紀錄': '#00CC96', '未來預測': '#FFA500'})
     fig_forecast.update_traces(selector=dict(name='未來預測'), line=dict(dash='dot'))
     st.plotly_chart(fig_forecast, use_container_width=True)
     
-    final_val = df_forecast.iloc[-1]['Trend_Assets']
+    final_val = df_forecast.iloc[-1]['Effective_Asset']
     st.success(f"🎯 **模擬結果：** {forecast_years} 年後總資產預估 **${final_val:,.0f} TWD**。")
 
-    # --- Debug 區：讓 Jeffy 確認到底讀到了什麼 ---
-    with st.expander("🔍 數據除錯 (Debug) - 查看最新一筆資料的原始讀數"):
-        st.write("最新日期:", latest['日期'])
-        st.write("讀取到的 真實總資產(TWD):", latest['真實總資產(TWD)'])
-        st.write("讀取到的 股票價值(USD):", latest['股票價值(USD)'])
-        st.write("讀取到的 ETF價值(EUR):", latest['ETF價值(EUR)'])
-        st.write("---")
+    # Debug
+    with st.expander("🔍 數據除錯 (Debug)"):
+        st.write("最新一筆有效日期:", latest['日期'])
         st.dataframe(df_total.tail(5))
 
 else:
