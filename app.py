@@ -267,7 +267,7 @@ if not df_total.empty and len(df_total) > 0:
     curr_etf = etf_val
     curr_crypto = crypto_val
     curr_safe = twd_cash_val + fx_cash_val + real_estate_val + other_val
-    curr_car = car_val
+    curr_car = car_val * eur_rate
     
     invest_sum = stock_val + etf_val + crypto_val + curr_safe
     if invest_sum == 0: invest_sum = 1
