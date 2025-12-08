@@ -101,7 +101,7 @@ if not df_total.empty and len(df_total) > 0:
     # --- 側邊欄：還原 V01 設定 ---
     with st.sidebar:
         st.header("⚙️ 戰情室參數")
-        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=510000000, step=1000000)
+        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=100000000, step=10000000)
         st.divider()
         monthly_expense = st.number_input("退休後月開銷 (TWD)", value=300000, step=5000)
         
