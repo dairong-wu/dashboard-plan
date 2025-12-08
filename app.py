@@ -93,16 +93,13 @@ if not df_total.empty and len(df_total) > 0:
     val_car = latest.get('汽車預估價格(GPT模型)', 0)
 
     # --- 資產成本分解 (Cost Basis) ---
-    # 假設: 若無獨立成本欄位，則視為成本=現值 (如房產、現金)
     cost_stock = latest.get('股票成本(USD)', 0) * usd_rate
     cost_etf = latest.get('ETF(EUR)', 0) * eur_rate
-    # 加密貨幣暫無成本欄位，暫設為現值的 80% (模擬) 或等於現值
-    cost_crypto = val_crypto * 0.8 
+    cost_crypto = val_crypto * 0.8 # 模擬成本
     
     total_market_value = latest['Effective_Asset']
     total_cost_basis = cost_stock + cost_etf + cost_crypto + val_twd_cash + val_foreign_cash + val_real_estate + val_other + val_car
-    unrealized_pnl = total_market_value - total_cost_basis
-
+    
     # --- 側邊欄設定 ---
     with st.sidebar:
         st.header("⚙️ 戰情室參數")
@@ -126,7 +123,7 @@ if not df_total.empty and len(df_total) > 0:
             st.cache_data.clear()
             st.rerun()
 
-    # --- KPI 區塊 ---
+    # --- Row 1: KPI 區塊 ---
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         month_diff = latest['Effective_Asset'] - prev['Effective_Asset']
@@ -136,7 +133,6 @@ if not df_total.empty and len(df_total) > 0:
         fire_progress = (total_market_value / fire_goal) * 100
         st.metric("🎯 FIRE 進度", f"{fire_progress:.2f}%", f"差 ${fire_goal - total_market_value:,.0f}", delta_color="inverse")
     with col3:
-        # 4. FIRE Runway 計算
         runway_years = total_market_value / (monthly_expense_twd * 12)
         st.metric("⏳ 財務跑道 (Runway)", f"{runway_years:.1f} 年", f"月花費 ${monthly_expense_twd:,.0f}")
     with col4:
@@ -152,14 +148,16 @@ if not df_total.empty and len(df_total) > 0:
     with col_main:
         st.subheader("📈 資產累積趨勢 (Net Worth)")
         fig_trend = px.line(df_total, x='日期', y='Effective_Asset', markers=True, title='歷史淨值走勢', template="plotly_dark")
-        fig_trend.update_traces(line=dict(connectgaps=True, color='#00CC96', width=3))
-        # 增加預測點的視覺指引
+        
+        # [最終修正] 拆解 update_traces 以解決 Plotly 版本兼容性問題
+        fig_trend.update_traces(connectgaps=True)
+        fig_trend.update_traces(line_color='#00CC96', line_width=3)
+        
         fig_trend.add_hline(y=fire_goal, line_dash="dot", line_color="red", annotation_text="FIRE Goal")
         st.plotly_chart(fig_trend, use_container_width=True)
 
     with col_treemap:
         st.subheader("🗺️ 資產板塊 (Asset Treemap)")
-        # 1. 準備 Treemap 數據
         treemap_data = [
             {'Asset': '美股 (Stocks)', 'Parent': '投資組合', 'Value': val_stock, 'Color': '#FF4B4B'},
             {'Asset': '歐股/ETF (ETFs)', 'Parent': '投資組合', 'Value': val_etf, 'Color': '#FFA500'},
@@ -169,14 +167,13 @@ if not df_total.empty and len(df_total) > 0:
             {'Asset': '外幣現金 (FX Cash)', 'Parent': '防禦資產', 'Value': val_foreign_cash, 'Color': '#00CC96'},
             {'Asset': '汽車 (Car)', 'Parent': '消費資產', 'Value': val_car, 'Color': '#808080'},
             {'Asset': '其他', 'Parent': '其他', 'Value': val_other, 'Color': '#808080'},
-            {'Asset': '投資組合', 'Parent': '總資產', 'Value': 0, 'Color': 'lightgrey'}, # Parent nodes
+            {'Asset': '投資組合', 'Parent': '總資產', 'Value': 0, 'Color': 'lightgrey'},
             {'Asset': '防禦資產', 'Parent': '總資產', 'Value': 0, 'Color': 'lightgrey'},
             {'Asset': '消費資產', 'Parent': '總資產', 'Value': 0, 'Color': 'lightgrey'},
             {'Asset': '其他', 'Parent': '總資產', 'Value': 0, 'Color': 'lightgrey'},
             {'Asset': '總資產', 'Parent': '', 'Value': 0, 'Color': 'white'}
         ]
         df_tree = pd.DataFrame(treemap_data)
-        # 過濾掉值為 0 的子項目 (Parent 項目保留)
         df_tree = df_tree[(df_tree['Value'] > 0) | (df_tree['Parent'] == '') | (df_tree['Parent'] == '總資產')]
         
         fig_tree = px.treemap(df_tree, names='Asset', parents='Parent', values='Value',
@@ -189,7 +186,6 @@ if not df_total.empty and len(df_total) > 0:
 
     with col_water:
         st.subheader("💧 成本 vs. 市值 (P&L Waterfall)")
-        # 2. 瀑布圖數據
         fig_water = go.Figure(go.Waterfall(
             name = "20", orientation = "v",
             measure = ["relative", "relative", "relative", "relative", "relative", "total"],
@@ -204,7 +200,6 @@ if not df_total.empty and len(df_total) > 0:
 
     with col_radar:
         st.subheader("🌍 貨幣曝險分析 (Currency Risk)")
-        # 3. 貨幣分佈
         usd_exposure = val_stock + val_crypto
         eur_exposure = val_etf + val_foreign_cash
         twd_exposure = val_twd_cash + val_real_estate + val_other + val_car
@@ -222,16 +217,11 @@ if not df_total.empty and len(df_total) > 0:
     st.divider()
     st.subheader(f"🔮 未來 {forecast_years} 年資產模擬 (含汽車折舊)")
     
-    # 預測邏輯
     current_date = latest['日期']
     forecast_months = forecast_years * 12
     future_data = []
     
-    # 分離投資資產與折舊資產
-    investable_capital = val_stock + val_etf + val_crypto + val_twd_cash + val_foreign_cash + val_other # 假設房產不增值不折舊，或視為投資
-    # 這裡為了簡化，將房產也算入每年 7% 成長 (或者你可以將房產分離出來設為低成長)
-    # 假設: 投資資產(含房)按年化成長，汽車按折舊
-    
+    # 預測邏輯：投資資產複利 + 汽車折舊
     curr_investable = total_market_value - val_car
     curr_car = val_car
     monthly_rate = annual_growth / 100 / 12
@@ -239,14 +229,9 @@ if not df_total.empty and len(df_total) > 0:
 
     for i in range(1, forecast_months + 1):
         future_date = current_date + relativedelta(months=i)
-        
-        # 投資複利 + 投入
         curr_investable = (curr_investable * (1 + monthly_rate)) + monthly_contribution
-        
-        # 汽車折舊
         curr_car = curr_car * (1 - depreciation_monthly)
         if curr_car < 0: curr_car = 0
-        
         total_forecast = curr_investable + curr_car
         future_data.append({'日期': future_date, 'Effective_Asset': total_forecast})
 
@@ -264,21 +249,18 @@ if not df_total.empty and len(df_total) > 0:
     st.plotly_chart(fig_forecast, use_container_width=True)
     
     final_val = df_forecast.iloc[-1]['Effective_Asset']
-    
-    # 結論文字
     years_to_fire = (fire_goal - total_market_value) / ( (monthly_contribution * 12) + (total_market_value * annual_growth/100) ) 
-    years_to_fire = max(0, years_to_fire) # 避免負數
+    years_to_fire = max(0, years_to_fire)
     
     st.success(f"""
     🎯 **戰情室推演：** 在年化報酬 **{annual_growth}%** 且每月存 **${monthly_contribution:,.0f}** 的情況下，
     {forecast_years} 年後總淨值約 **${final_val:,.0f}**。
-    粗略估計，距離你的 FIRE 目標可能還需要 **{years_to_fire:.1f} 年** (若不考慮通膨)。
+    粗略估計，距離你的 FIRE 目標可能還需要 **{years_to_fire:.1f} 年**。
     """)
 
     # Debug
     with st.expander("🔍 數據除錯 (Debug)"):
         st.write("最新有效日期:", latest['日期'])
-        st.write("投入成本估算:", total_cost_basis)
         st.dataframe(df_total.tail(5))
 
 else:
