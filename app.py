@@ -109,7 +109,7 @@ if not df_total.empty and len(df_total) > 0:
         st.divider()
         
         st.subheader("🔮 分析師估值模型")
-        forecast_years = st.slider("模擬未來年數", 1, 10, 5)
+        forecast_years = st.slider("模擬未來年數", 1, 27, 5)
 
         scenario = st.selectbox(
             "選擇分析師/市場情境",
