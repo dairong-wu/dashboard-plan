@@ -75,8 +75,8 @@ if not df_total.empty and len(df_total) > 0:
     prev = df_total.iloc[-2] if len(df_total) > 1 else latest
     
     # 匯率
-    usd_rate = latest.get('USDTWD', 32.5) if latest.get('USDTWD', 0) > 10 else 32.5
-    eur_rate = latest.get('EURTWD', 35.0) if latest.get('EURTWD', 0) > 10 else 35.0
+    usd_rate = latest.get('USDTWD', 32.5) if latest.get('USDTWD', 0) > 10 else 31.5
+    eur_rate = latest.get('EURTWD', 35.0) if latest.get('EURTWD', 0) > 10 else 36.0
     
     # --- 資產價值 (Market Value) ---
     stock_val = latest.get('股票價值(USD)', 0) * usd_rate
@@ -101,9 +101,9 @@ if not df_total.empty and len(df_total) > 0:
     # --- 側邊欄：還原 V01 設定 ---
     with st.sidebar:
         st.header("⚙️ 戰情室參數")
-        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=50000000, step=1000000)
+        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=510000000, step=1000000)
         st.divider()
-        monthly_expense = st.number_input("退休後月開銷 (TWD)", value=100000, step=5000)
+        monthly_expense = st.number_input("退休後月開銷 (TWD)", value=300000, step=5000)
         
         st.divider()
         st.subheader("🔮 分析師估值模型")
@@ -173,8 +173,8 @@ if not df_total.empty and len(df_total) > 0:
         runway = total_market_val / (monthly_expense * 12)
         st.metric("⏳ 財務跑道", f"{runway:.1f} 年", f"月開銷 ${monthly_expense:,.0f}")
     with col4:
-        passive = (total_market_val * 0.04) / 12
-        st.metric("🛡️ 4%法則月收", f"${passive:,.0f}", f"目標: ${monthly_expense:,.0f}")
+        passive = (total_market_val * 0.06) / 12
+        st.metric("🛡️ 6%法則月收", f"${passive:,.0f}", f"目標: ${monthly_expense:,.0f}")
 
     st.divider()
 
