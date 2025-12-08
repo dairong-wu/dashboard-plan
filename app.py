@@ -268,10 +268,10 @@ if not df_total.empty and len(df_total) > 0:
     st.success(f"🎯 **模擬結果：** {forecast_years} 年後總資產預估 **${final_val:,.0f} TWD**。")
 
     # Debug
-    with st.expander("🔍 **數據除錯 (Debug)**"):
-        st.subheader("最新一筆有效數據 (已過濾未來空行)")
-        st.write(f"最新日期: **{latest['日期'].strftime('%Y/%m')}**")
-        st.dataframe(df_total.tail(5))
+    #with st.expander("🔍 **數據除錯 (Debug)**"):
+    #    st.subheader("最新一筆有效數據 (已過濾未來空行)")
+    #    st.write(f"最新日期: **{latest['日期'].strftime('%Y/%m')}**")
+    #    st.dataframe(df_total.tail(5))
 
 else:
     st.warning("⚠️ 讀取失敗，請確認 secrets.toml 設定。")
