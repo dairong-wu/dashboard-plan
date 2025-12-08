@@ -36,8 +36,7 @@ def load_data(url):
         # 1. 強力清洗：轉純數字
         for col in target_cols:
             if col in df_total.columns:
-                # 關鍵修復：先移除逗號，然後移除所有非數字字符 (解決 18M 讀取為 0 的問題)
-                df_total[col] = df_total[col].astype(str).str.replace(',', '', regex=False).apply(
+                df_total[col] = df_total[col].astype(str).apply(
                     lambda x: re.sub(r'[^\d\.\-]', '', x)
                 )
                 df_total[col] = pd.to_numeric(df_total[col], errors='coerce').fillna(0)
@@ -47,10 +46,11 @@ def load_data(url):
         # 2. 轉換日期
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         
-        # 3. 建立「有效數據」判斷 (優先使用真實總資產)
+        # 3. [關鍵修正] 建立「有效數據」判斷
+        # 邏輯：優先使用 '真實總資產'，如果該月資料為 0 (歷史未填)，則回退使用 '總資產'
         df_total['Effective_Asset'] = np.where(df_total['真實總資產(TWD)'] > 0, df_total['真實總資產(TWD)'], df_total['總資產(TWD)'])
         
-        # 4. 過濾：只保留 Effective_Asset > 0 的行 (鎖定最新有效數據)
+        # 過濾：只保留 Effective_Asset > 0 的行 (這樣就會把 2026/1 這種空行濾掉，鎖定 2025/12)
         df_total = df_total[df_total['Effective_Asset'] > 0].copy()
         
         df_total = df_total.sort_values('日期').reset_index(drop=True)
@@ -67,7 +67,7 @@ st.title("🔥 Jeffy 的 FIRE 戰情室 - Pro Valuation Edition")
 
 if not df_total.empty and len(df_total) > 0:
     
-    # --- 基礎數據 ---
+    # --- 基礎數據 (現在抓到的一定是有效數據的最後一筆) ---
     latest = df_total.iloc[-1]
     prev = df_total.iloc[-2] if len(df_total) > 1 else latest
     
@@ -77,10 +77,11 @@ if not df_total.empty and len(df_total) > 0:
     usd_rate = raw_usd_rate if raw_usd_rate > 10 else 32.5
     eur_rate = raw_eur_rate if raw_eur_rate > 10 else 35.0
     
-    # --- 資產價值計算 ---
+    # --- 資產價值計算 (使用真實價值) ---
     val_stock = latest.get('股票價值(USD)', 0) * usd_rate
     val_etf = latest.get('ETF價值(EUR)', 0) * eur_rate
     
+    # 如果真實價值是 0，自動 fallback 到成本 (僅供圓餅圖顯示用)
     if val_stock == 0: val_stock = latest.get('股票成本(USD)', 0) * usd_rate
     if val_etf == 0: val_etf = latest.get('ETF(EUR)', 0) * eur_rate
 
@@ -90,7 +91,7 @@ if not df_total.empty and len(df_total) > 0:
     val_real_estate = latest.get('不動產(TWD)', 0)
     val_other = latest.get('其他(TWD)', 0)
     
-    # --- 總資產 KPI ---
+    # --- [關鍵] 總資產 KPI - 不再有 fallback ---
     current_assets = latest['Effective_Asset']
     prev_assets = prev['Effective_Asset']
     
@@ -104,7 +105,7 @@ if not df_total.empty and len(df_total) > 0:
     # --- 側邊欄 ---
     with st.sidebar:
         st.header("⚙️ 參數設定")
-        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=50000000, step=1000000)
+        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=100000000, step=10000000)
         st.divider()
         
         st.subheader("🔮 分析師估值模型")
@@ -177,10 +178,8 @@ if not df_total.empty and len(df_total) > 0:
 
     with col_chart1:
         st.subheader("📈 資產累積趨勢 (真實價值)")
-        # [關鍵修復 1] 曲線圖改用 connectgaps=True 消除斷點
         fig_trend = px.line(df_total, x='日期', y='Effective_Asset', markers=True, title='Net Worth Growth (Real Value)', template="plotly_dark")
-        # [關鍵修復 2] 合併參數解決 ValueError
-        fig_trend.update_traces(line=dict(connectgaps=True, color='#00CC96')) 
+        fig_trend.update_traces(line_color='#00CC96', line_width=3)
         st.plotly_chart(fig_trend, use_container_width=True)
 
     with col_chart2:
@@ -205,12 +204,10 @@ if not df_total.empty and len(df_total) > 0:
             df_display['占比(%)'] = (df_display['Raw_Value'] / total_display_val * 100)
             df_display = df_display.sort_values(by='Raw_Value', ascending=False)
             
-            # 1. 圓餅圖
             fig_pie = px.pie(df_display, values='Raw_Value', names='資產種類', hole=0.4, 
                              color_discrete_sequence=px.colors.sequential.RdBu)
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # 2. 表格
             df_table = df_display[['資產種類', '金額(TWD)', '占比(%)']].copy()
             df_table['金額(TWD)'] = df_table['金額(TWD)'].map('${:,.0f}'.format)
             df_table['占比(%)'] = df_table['占比(%)'].map('{:.2f}%'.format)
@@ -271,10 +268,10 @@ if not df_total.empty and len(df_total) > 0:
     st.success(f"🎯 **模擬結果：** {forecast_years} 年後總資產預估 **${final_val:,.0f} TWD**。")
 
     # Debug
-    with st.expander("🔍 **數據除錯 (Debug)**"):
-        st.subheader("最新一筆有效數據 (已過濾未來空行)")
-        st.write(f"最新日期: **{latest['日期'].strftime('%Y/%m')}**")
-        st.dataframe(df_total.tail(5))
+    #with st.expander("🔍 **數據除錯 (Debug)**"):
+    #    st.subheader("最新一筆有效數據 (已過濾未來空行)")
+    #    st.write(f"最新日期: **{latest['日期'].strftime('%Y/%m')}**")
+    #    st.dataframe(df_total.tail(5))
 
 else:
     st.warning("⚠️ 讀取失敗，請確認 secrets.toml 設定。")
