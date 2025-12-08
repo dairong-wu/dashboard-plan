@@ -23,14 +23,32 @@ def load_data(url):
     try:
         df_total = pd.read_csv(url, header=1) 
         df_total.columns = df_total.columns.str.strip() 
-        df_total = df_total.dropna(subset=['日期', '總資產(TWD)']).copy()
-        df_total = df_total[df_total['總資產(TWD)'] != 0].copy()
+        
+        # 為了避免新欄位為空導致報錯，先做基本的欄位存在性檢查
+        # 如果新欄位還沒同步到 CSV，這裡會自動 fallback 到舊欄位以免程式崩潰，但主要邏輯在後面
+        
+        # 移除完全無效的列
+        # 注意：這裡改用 '真實總資產(TWD)' 作為檢查標準，如果該欄位存在
+        check_col = '真實總資產(TWD)' if '真實總資產(TWD)' in df_total.columns else '總資產(TWD)'
+        df_total = df_total.dropna(subset=['日期', check_col]).copy()
+        
+        # 排除未來空行 (資產為 0)
+        # 這裡先轉字串再轉數字確保比較正確
+        df_total[check_col] = pd.to_numeric(df_total[check_col].astype(str).apply(lambda x: re.sub(r'[^\d\.\-]', '', x)), errors='coerce').fillna(0)
+        df_total = df_total[df_total[check_col] != 0].copy()
+        
         df_total['日期'] = pd.to_datetime(df_total['日期'], errors='coerce')
         df_total = df_total.sort_values('日期').reset_index(drop=True)
         
-        numeric_cols = ['總資產(TWD)', '台幣現金(TWD)', '外幣現金(EUR)', 
-                        '股票成本(USD)', 'ETF(EUR)', '不動產(TWD)', '加密貨幣(USD)', 
-                        '其他(TWD)', 'USDTWD', 'EURTWD', '總資產增額(TWD)']
+        # 定義所有需要清洗的數值欄位 (包含你新增的三個真實價值欄位)
+        numeric_cols = [
+            '真實總資產(TWD)', '總資產(TWD)', # 新舊並存
+            '股票價值(USD)', '股票成本(USD)', # 新舊並存
+            'ETF價值(EUR)', 'ETF(EUR)',     # 新舊並存
+            '台幣現金(TWD)', '外幣現金(EUR)', '不動產(TWD)', 
+            '加密貨幣(USD)', '其他(TWD)', 
+            'USDTWD', 'EURTWD', '總資產增額(TWD)'
+        ]
         
         for col in numeric_cols:
             if col in df_total.columns:
@@ -39,6 +57,7 @@ def load_data(url):
                 )
                 df_total[col] = pd.to_numeric(df_total[col], errors='coerce').fillna(0)
             else:
+                # 如果 CSV 還沒更新到新欄位，就填 0
                 df_total[col] = 0
 
         return df_total
@@ -63,29 +82,41 @@ if not df_total.empty and len(df_total) > 0:
     usd_rate = raw_usd_rate if raw_usd_rate > 10 else 32.5
     eur_rate = raw_eur_rate if raw_eur_rate > 10 else 35.0
     
-    # 資產價值計算
-    val_stock = latest.get('股票成本(USD)', 0) * usd_rate
-    val_etf = latest.get('ETF(EUR)', 0) * eur_rate
+    # --- [關鍵修改 1 & 2] 資產價值計算 (使用真實價值) ---
+    # 優先讀取 '股票價值(USD)'，如果沒有則 fallback 到 '股票成本(USD)' (防止舊數據報錯)
+    stock_usd_col = '股票價值(USD)' if latest.get('股票價值(USD)', 0) > 0 else '股票成本(USD)'
+    etf_eur_col = 'ETF價值(EUR)' if latest.get('ETF價值(EUR)', 0) > 0 else 'ETF(EUR)'
+    
+    val_stock = latest.get(stock_usd_col, 0) * usd_rate
+    val_etf = latest.get(etf_eur_col, 0) * eur_rate
+    
+    # 其他資產保持不變
     val_crypto = latest.get('加密貨幣(USD)', 0) * usd_rate
     val_foreign_cash = latest.get('外幣現金(EUR)', 0) * eur_rate
     val_twd_cash = latest.get('台幣現金(TWD)', 0)
     val_real_estate = latest.get('不動產(TWD)', 0)
     val_other = latest.get('其他(TWD)', 0)
     
-    calculated_total_assets = val_stock + val_etf + val_crypto + val_foreign_cash + val_twd_cash + val_real_estate + val_other
+    # --- [關鍵修改 3] 總資產計算 (使用真實總資產) ---
+    # 優先使用 '真實總資產(TWD)'
+    total_asset_col = '真實總資產(TWD)' if latest.get('真實總資產(TWD)', 0) > 0 else '總資產(TWD)'
+    
+    current_assets = latest[total_asset_col]
+    prev_assets = prev[total_asset_col] # 確保比較基準一致
     
     # KPI 計算
-    month_diff = latest['總資產(TWD)'] - prev['總資產(TWD)']
-    growth_rate = (month_diff / prev['總資產(TWD)']) * 100 if prev['總資產(TWD)'] != 0 else 0
+    month_diff = current_assets - prev_assets
+    growth_rate = (month_diff / prev_assets) * 100 if prev_assets != 0 else 0
     
-    # 歷史平均月儲蓄
+    # 歷史平均月儲蓄 (這裡還是用增額比較準，或者你可以改成用真實資產的差額平均)
+    # 暫時維持用 '總資產增額(TWD)' 因為這是你實際存入的錢，不受市場波動影響太大
     df_gains = df_total[df_total['總資產增額(TWD)'] > 0]
     historical_avg_gain = df_gains['總資產增額(TWD)'].mean() if not df_gains.empty else 50000
 
     # --- 側邊欄：進階模型設定 ---
     with st.sidebar:
         st.header("⚙️ 參數設定")
-        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=100000000, step=10000000)
+        fire_goal = st.number_input("🎯 FIRE 目標 (TWD)", value=50000000, step=1000000)
         st.divider()
         
         st.subheader("🔮 分析師估值模型 (SOP)")
@@ -98,7 +129,7 @@ if not df_total.empty and len(df_total) > 0:
             ("自訂 (Custom)", 
              "Cathie Wood (Ark Invest) - 科技牛市", 
              "Wall Street Consensus - 華爾街共識", 
-             "Ray Dalio (All Weather) - 穩健防禦",
+             "Ray Dalio (All Weather) - 穩健防禦", 
              "Michael Burry (The Big Short) - 衰退修正")
         )
 
@@ -133,7 +164,10 @@ if not df_total.empty and len(df_total) > 0:
             st.rerun()
 
     # --- 邏輯運算：計算加權成長率 ---
+    # 這裡重新加總一次做分母，確保比例正確 (使用最新的真實價值)
+    calculated_total_assets = val_stock + val_etf + val_crypto + val_foreign_cash + val_twd_cash + val_real_estate + val_other
     total_val = calculated_total_assets if calculated_total_assets > 0 else 1
+    
     w_stock = val_stock / total_val
     w_etf = val_etf / total_val
     w_crypto = val_crypto / total_val
@@ -144,14 +178,15 @@ if not df_total.empty and len(df_total) > 0:
     # --- KPI 區塊 ---
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("💰 總資產 (TWD)", f"${calculated_total_assets:,.0f}", f"{month_diff:,.0f} ({growth_rate:.2f}%)")
+        # 使用 current_assets (即 真實總資產)
+        st.metric("💰 總資產 (TWD)", f"${current_assets:,.0f}", f"{month_diff:,.0f} ({growth_rate:.2f}%)")
     with col2:
         st.metric("📊 投資組合隱含CAGR", f"{weighted_cagr:.2f}%", f"情境: {scenario.split('-')[0]}")
     with col3:
-        passive_monthly = (calculated_total_assets * 0.04) / 12
+        passive_monthly = (current_assets * 0.04) / 12
         st.metric("🛌 4%法則月收", f"${passive_monthly:,.0f}")
     with col4:
-        total_eur_est = calculated_total_assets / eur_rate
+        total_eur_est = current_assets / eur_rate
         st.metric("🇪🇺 總資產 (EUR)", f"€{total_eur_est:,.0f}", f"Rate: {eur_rate}")
 
     st.divider()
@@ -161,31 +196,30 @@ if not df_total.empty and len(df_total) > 0:
 
     with col_chart1:
         st.subheader("📈 資產累積趨勢")
-        fig_trend = px.line(df_total, x='日期', y='總資產(TWD)', markers=True, title='Net Worth Growth', template="plotly_dark")
+        # 繪圖改用 total_asset_col (即 真實總資產)
+        fig_trend = px.line(df_total, x='日期', y=total_asset_col, markers=True, title='Net Worth Growth (Real Value)', template="plotly_dark")
         fig_trend.update_traces(line_color='#00CC96', line_width=3)
         st.plotly_chart(fig_trend, use_container_width=True)
 
     with col_chart2:
         st.subheader("🍰 資產權重分布")
         
-        # 準備詳細數據
+        # 準備詳細數據 (使用真實價值)
         assets_dict_detail = {
             '不動產': val_real_estate,
-            '美股': val_stock,
+            '美股 (市值)': val_stock, # 標註市值
             '台幣現金': val_twd_cash,
-            '歐股/ETF': val_etf,
+            '歐股/ETF (市值)': val_etf, # 標註市值
             '外幣現金': val_foreign_cash,
             '加密貨幣': val_crypto,
             '其他': val_other
         }
         
-        # 轉換為 DataFrame 方便處理
         df_display = pd.DataFrame([
             {'資產種類': k, '金額(TWD)': v, 'Raw_Value': v} 
             for k, v in assets_dict_detail.items() if v > 0
         ])
         
-        # 計算占比並排序
         if not df_display.empty:
             total_display_val = df_display['Raw_Value'].sum()
             df_display['占比(%)'] = (df_display['Raw_Value'] / total_display_val * 100)
@@ -196,7 +230,7 @@ if not df_total.empty and len(df_total) > 0:
                              color_discrete_sequence=px.colors.sequential.RdBu)
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # 2. 表格 (格式化)
+            # 2. 表格
             df_table = df_display[['資產種類', '金額(TWD)', '占比(%)']].copy()
             df_table['金額(TWD)'] = df_table['金額(TWD)'].map('${:,.0f}'.format)
             df_table['占比(%)'] = df_table['占比(%)'].map('{:.2f}%'.format)
@@ -220,7 +254,7 @@ if not df_total.empty and len(df_total) > 0:
     forecast_months = forecast_years * 12
     future_data = []
     
-    # 預測初始值
+    # 預測初始值 (使用真實價值)
     curr_stock = val_stock
     curr_etf = val_etf
     curr_crypto = val_crypto
@@ -246,7 +280,8 @@ if not df_total.empty and len(df_total) > 0:
 
     df_forecast = pd.DataFrame(future_data)
     
-    df_history = df_total[['日期', '總資產(TWD)']].copy()
+    df_history = df_total[['日期', total_asset_col]].copy()
+    df_history.columns = ['日期', '總資產(TWD)'] # 統一欄位名稱方便合併
     df_history['Type'] = '歷史紀錄'
     df_forecast['Type'] = '未來預測'
     df_combined = pd.concat([df_history, df_forecast])
