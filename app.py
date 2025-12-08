@@ -33,18 +33,13 @@ def load_data(url):
             'USDTWD', 'EURTWD', '總資產增額(TWD)'
         ]
         
-        # 1. 強力清洗：轉純數字 (兼容性修復)
+        # 1. 強力清洗：轉純數字
         for col in target_cols:
             if col in df_total.columns:
-                # 關鍵修正：Step 1: 先移除逗號 (假設為千分位)
-                cleaned_series = df_total[col].astype(str).str.replace(',', '', regex=False)
-                
-                # Step 2: 移除所有非數字、非小數點、非負號的符號
-                df_total[col] = cleaned_series.apply(
+                # 關鍵修復：先移除逗號，然後移除所有非數字字符 (解決 18M 讀取為 0 的問題)
+                df_total[col] = df_total[col].astype(str).str.replace(',', '', regex=False).apply(
                     lambda x: re.sub(r'[^\d\.\-]', '', x)
                 )
-                
-                # Step 3: 轉換為數字，失敗填 0
                 df_total[col] = pd.to_numeric(df_total[col], errors='coerce').fillna(0)
             else:
                 df_total[col] = 0
@@ -182,9 +177,10 @@ if not df_total.empty and len(df_total) > 0:
 
     with col_chart1:
         st.subheader("📈 資產累積趨勢 (真實價值)")
-        # [關鍵修復] 曲線圖改用 connectgaps=True 消除斷點
+        # [關鍵修復 1] 曲線圖改用 connectgaps=True 消除斷點
         fig_trend = px.line(df_total, x='日期', y='Effective_Asset', markers=True, title='Net Worth Growth (Real Value)', template="plotly_dark")
-        fig_trend.update_traces(line=dict(connectgaps=True), line_color='#00CC96')
+        # [關鍵修復 2] 合併參數解決 ValueError
+        fig_trend.update_traces(line=dict(connectgaps=True, color='#00CC96')) 
         st.plotly_chart(fig_trend, use_container_width=True)
 
     with col_chart2:
