@@ -224,7 +224,7 @@ if not df_total.empty and len(df_total) > 0:
         pnl_data = {
             '美股': stock_val - stock_cost,
             'ETF': etf_val - etf_cost,
-            '加密貨幣': crypto_val * 0.2, 
+            '加密貨幣': crypto_val * 0.0, #TBD 
         }
         df_pnl = pd.DataFrame(list(pnl_data.items()), columns=['Asset', 'PnL'])
         df_pnl['Color'] = np.where(df_pnl['PnL'] >= 0, '#00CC96', '#FF4B4B')
